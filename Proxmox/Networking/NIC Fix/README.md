@@ -12,28 +12,86 @@ Proxmox occasionally loses internet connectivity, requiring manual intervention 
 - `network-monitor.sh` - Continuous monitoring script (optional)
 - `network-fix.service` - Systemd service file for monitoring (optional)
 
-## Quick Start
+## Automated Installation (Recommended)
 
-1. **Download and setup the script:**
-   ```bash
-   # Clone or download the script
-   wget https://raw.githubusercontent.com/TrueBankai416/Proxmox/main/fix-network.sh
-   
-   # Make it executable
-   chmod +x fix-network.sh
-   
-   # Move to a system location (optional)
-   sudo mv fix-network.sh /usr/local/bin/fix-network
-   ```
+**One-command installation:**
+```bash
+# Download and run the automated installer
+curl -sSL https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/Networking/NIC%20Fix/install.sh | sudo bash
+```
 
-2. **Run the script:**
-   ```bash
-   # Run with auto-detection of primary interface
-   sudo ./fix-network.sh
-   
-   # Or specify a specific interface
-   sudo ./fix-network.sh eth0
-   ```
+**Or download first then install:**
+```bash
+# Download the installer
+wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/Networking/NIC%20Fix/install.sh
+
+# Make it executable and run
+chmod +x install.sh
+sudo ./install.sh
+```
+
+This automated installer will:
+- Install all scripts to `/usr/local/bin/`
+- Create systemd service files
+- Set up logging
+- Create convenient command aliases
+- Test the installation
+
+## Manual Installation
+
+### Option 1: Clone Repository (Get Everything)
+```bash
+# Clone the entire repository
+git clone https://github.com/TrueBankai416/Scripts.git
+cd Scripts/Proxmox/Networking/NIC\ Fix/
+
+# Run the installer
+chmod +x install.sh
+sudo ./install.sh
+```
+
+### Option 2: Download All Files
+```bash
+# Create temporary directory
+mkdir -p ~/proxmox-network-fix
+cd ~/proxmox-network-fix
+
+# Download all files
+wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/Networking/NIC%20Fix/fix-network.sh
+wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/Networking/NIC%20Fix/network-monitor.sh
+wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/Networking/NIC%20Fix/network-fix.service
+wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/Networking/NIC%20Fix/install.sh
+
+# Run the installer
+chmod +x install.sh
+sudo ./install.sh
+```
+
+### Option 3: Individual Script Setup (Quick Start)
+```bash
+# Download just the main script
+wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/Networking/NIC%20Fix/fix-network.sh
+
+# Make it executable
+chmod +x fix-network.sh
+
+# Move to system location (optional)
+sudo mv fix-network.sh /usr/local/bin/fix-network
+```
+
+## Usage
+
+**After installation, run the script:**
+```bash
+# Run with auto-detection of primary interface
+sudo fix-network
+
+# Or specify a specific interface
+sudo fix-network eth0
+
+# If using manual installation without moving to /usr/local/bin
+sudo ./fix-network.sh
+```
 
 ## Features
 
@@ -66,38 +124,35 @@ sudo ./fix-network.sh eth0
 ./fix-network.sh --help
 ```
 
-### Automated Monitoring (Option 1: Cron Job)
+### Automated Monitoring (Option 1: Systemd Service - Recommended)
 
-Add to root's crontab to check network every 5 minutes:
+If you used the automated installer, the systemd service is already configured:
+
+```bash
+# Enable and start the monitoring service
+sudo systemctl enable network-fix.service
+sudo systemctl start network-fix.service
+
+# Check service status
+sudo systemctl status network-fix.service
+
+# View service logs
+sudo journalctl -u network-fix.service -f
+```
+
+### Automated Monitoring (Option 2: Cron Job)
+
+For simpler periodic checks, add to root's crontab:
 
 ```bash
 # Edit crontab
 sudo crontab -e
 
 # Add this line (check every 5 minutes)
-*/5 * * * * /usr/local/bin/fix-network-monitor.sh > /dev/null 2>&1
+*/5 * * * * /usr/local/bin/network-monitor check > /dev/null 2>&1
 ```
 
-Create the monitoring script:
-
-```bash
-#!/bin/bash
-# /usr/local/bin/fix-network-monitor.sh
-
-LOG_FILE="/var/log/network-monitor.log"
-PING_TARGET="8.8.8.8"
-
-if ! ping -c 1 -W 5 "$PING_TARGET" &>/dev/null; then
-    echo "$(date): Network down, attempting fix" >> "$LOG_FILE"
-    /usr/local/bin/fix-network.sh >> "$LOG_FILE" 2>&1
-else
-    echo "$(date): Network OK" >> "$LOG_FILE"
-fi
-```
-
-### Automated Monitoring (Option 2: Systemd Service)
-
-For more advanced monitoring, you can create a systemd service that continuously monitors the network.
+Note: If you used the automated installer, the `network-monitor` command is already available.
 
 ## Configuration
 
