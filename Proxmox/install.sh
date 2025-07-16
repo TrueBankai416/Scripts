@@ -205,6 +205,15 @@ check_for_updates() {
     
     # All files are up to date
     print_status "$GREEN" "All files are up to date!"
+    if [[ "$force_check" == "true" ]]; then
+        echo ""
+        print_status "$BLUE" "Update check summary:"
+        echo "  ✓ Total files checked: ${#existing_files[@]}"
+        echo "  ✓ Files up to date: ${#existing_files[@]}"
+        echo "  ✓ Updates available: 0"
+        echo "  ✓ Check failed: ${#check_failed[@]}"
+        [[ ${#check_failed[@]} -gt 0 ]] && echo "  ⚠ Failed to check: ${check_failed[*]}"
+    fi
     return 0  # Signal to use existing files
 }
 
@@ -718,6 +727,7 @@ main() {
     done
     
     # Check for updates or missing files
+    print_status "$BLUE" "Checking for script updates..."
     if ! check_for_updates "$script_type" "true"; then
         # check_for_updates returned 1, meaning we should download
         if [[ ${#missing_files[@]} -gt 0 ]]; then
@@ -744,6 +754,8 @@ main() {
             printf ' - %s\n' "${still_missing[@]}"
             exit 1
         fi
+    else
+        print_status "$GREEN" "✓ Update check completed - using existing files"
     fi
     
     # Perform installation
@@ -773,11 +785,12 @@ interactive_mode() {
     echo "2. Download and install network tools only"
     echo "3. Download and install storage tools only"
     echo "4. Download scripts only (no installation)"
-    echo "5. Uninstall Proxmox tools"
-    echo "6. Test current installation"
-    echo "7. Exit"
+    echo "5. Check for script updates"
+    echo "6. Uninstall Proxmox tools"
+    echo "7. Test current installation"
+    echo "8. Exit"
     echo ""
-    echo -n "Enter your choice (1-7): "
+    echo -n "Enter your choice (1-8): "
     read -r choice
     
     case "$choice" in
@@ -799,14 +812,18 @@ interactive_mode() {
             ;;
         5)
             echo ""
-            uninstall_tools "interactive"
+            manual_update_check
             ;;
         6)
+            echo ""
+            uninstall_tools "interactive"
+            ;;
+        7)
             echo ""
             check_root
             test_installation
             ;;
-        7)
+        8)
             print_status "$YELLOW" "Exiting..."
             exit 0
             ;;
@@ -980,6 +997,102 @@ select_uninstall_type() {
     esac
 }
 
+# Function for manual update checking
+manual_update_check() {
+    print_status "$BLUE" "=== Manual Update Check ==="
+    echo ""
+    
+    # Check what's currently installed
+    local installed_network=false
+    local installed_storage=false
+    
+    [[ -f "$INSTALL_DIR/fix-network.sh" ]] && installed_network=true
+    [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]] && installed_storage=true
+    
+    if [[ "$installed_network" == false && "$installed_storage" == false ]]; then
+        print_status "$YELLOW" "No Proxmox tools are currently installed."
+        echo "Would you like to install some tools instead?"
+        echo "1. Yes, go to installation menu"
+        echo "2. No, check for updates in current directory"
+        echo "3. Back to main menu"
+        echo ""
+        echo -n "Enter your choice (1-3): "
+        read -r choice
+        
+        case "$choice" in
+            1)
+                interactive_mode
+                ;;
+            2)
+                print_status "$YELLOW" "Checking for updates in current directory..."
+                ;;
+            3)
+                interactive_mode
+                ;;
+            *)
+                print_status "$RED" "Invalid choice"
+                interactive_mode
+                ;;
+        esac
+    else
+        print_status "$YELLOW" "Currently installed tools:"
+        [[ "$installed_network" == true ]] && echo "  ✓ Network tools"
+        [[ "$installed_storage" == true ]] && echo "  ✓ Storage tools"
+        echo ""
+    fi
+    
+    # Determine what to check based on what's installed
+    local check_type="all"
+    if [[ "$installed_network" == true && "$installed_storage" == false ]]; then
+        check_type="network"
+    elif [[ "$installed_network" == false && "$installed_storage" == true ]]; then
+        check_type="storage"
+    fi
+    
+    print_status "$YELLOW" "What would you like to check for updates?"
+    echo "1. All available scripts"
+    echo "2. Network scripts only"
+    echo "3. Storage scripts only"
+    echo "4. Back to main menu"
+    echo ""
+    echo -n "Enter your choice (1-4): "
+    read -r choice
+    
+    case "$choice" in
+        1)
+            check_type="all"
+            ;;
+        2)
+            check_type="network"
+            ;;
+        3)
+            check_type="storage"
+            ;;
+        4)
+            interactive_mode
+            ;;
+        *)
+            print_status "$RED" "Invalid choice"
+            interactive_mode
+            ;;
+    esac
+    
+    echo ""
+    print_status "$BLUE" "Checking for updates for $check_type scripts..."
+    
+    # Run update check
+    if check_for_updates "$check_type" "true"; then
+        print_status "$GREEN" "All checked scripts are up to date!"
+    else
+        print_status "$YELLOW" "Updates were available and download process was triggered."
+    fi
+    
+    echo ""
+    echo "Press Enter to return to main menu..."
+    read -r
+    interactive_mode
+}
+
 # Handle command line arguments
 case "${1:-interactive}" in
     "install"|"1")
@@ -1002,6 +1115,9 @@ case "${1:-interactive}" in
         check_root
         test_installation
         ;;
+    "check-updates"|"update-check")
+        manual_update_check
+        ;;
     "interactive"|"")
         interactive_mode
         ;;
@@ -1016,6 +1132,7 @@ case "${1:-interactive}" in
         echo "  download         - Download scripts from repository only"
         echo "  uninstall        - Remove all Proxmox tools"
         echo "  test             - Test installation"
+        echo "  check-updates    - Check for script updates"
         echo "  help             - Show this help message"
         echo ""
         echo "Interactive Options:"
@@ -1023,9 +1140,10 @@ case "${1:-interactive}" in
         echo "  2. Download and install network tools only"
         echo "  3. Download and install storage tools only"
         echo "  4. Download scripts only (no installation)"
-        echo "  5. Uninstall Proxmox tools"
-        echo "  6. Test current installation"
-        echo "  7. Exit"
+        echo "  5. Check for script updates"
+        echo "  6. Uninstall Proxmox tools"
+        echo "  7. Test current installation"
+        echo "  8. Exit"
         echo ""
         echo "Repository: https://github.com/TrueBankai416/Scripts"
         echo "Script location: $REPO_URL"
