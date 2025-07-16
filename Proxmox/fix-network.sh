@@ -1,33 +1,13 @@
 #!/bin/bash
 
-# Network Interface Restart Script for Proxmox
-# This script restarts the network interface when connectivity is lost
-# Usage: ./fix-network.sh [interface_name]
-
-# Show usage if help is requested
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    echo "Usage: $0 [interface_name]"
-    echo ""
-    echo "Network Interface Restart Script for Proxmox"
-    echo "Restarts the network interface to fix connectivity issues"
-    echo ""
-    echo "Options:"
-    echo "  interface_name    Specific network interface to restart (optional)"
-    echo "  -h, --help       Show this help message"
-    echo ""
-    echo "Examples:"
-    echo "  $0               # Auto-detect and restart primary interface"
-    echo "  $0 eth0          # Restart specific interface"
-    echo "  $0 enp0s3        # Restart specific interface"
-    exit 0
-fi
+# Installation script for Proxmox Automation Tools
+# This script downloads and sets up network fix, monitoring, and storage management tools
 
 # Configuration
-LOG_FILE="/var/log/network-fix.log"
-MAX_RETRIES=3
-RETRY_DELAY=5
-PING_TARGET="8.8.8.8"
-CONNECTIVITY_TIMEOUT=5
+INSTALL_DIR="/usr/local/bin"
+SERVICE_DIR="/etc/systemd/system"
+LOG_DIR="/var/log"
+REPO_URL="https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox"
 
 # Colors for output
 RED='\033[0;31m'
@@ -36,666 +16,1292 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to log messages
-log_message() {
-    local level="$1"
+# Function to print colored output
+print_status() {
+    local color="$1"
     local message="$2"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
+    echo -e "${color}${message}${NC}"
 }
 
-# Function to check if we have root privileges
+# Function to check if running as root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        echo -e "${RED}Error: This script must be run as root${NC}"
+        print_status "$RED" "Error: This script must be run as root"
+        echo "Please run: sudo $0"
         exit 1
     fi
 }
 
-# Function to check network connectivity
-check_connectivity() {
-    local target="$1"
-    local timeout="$2"
+# Function to check for script updates
+check_for_updates() {
+    local script_type="${1:-all}"
+    local force_check="${2:-false}"
     
-    if ping -c 1 -W "$timeout" "$target" &>/dev/null; then
+    print_status "$BLUE" "Checking for script updates..."
+    
+    local network_files=(
+        "fix-network.sh"
+        "network-monitor.sh"
+        "network-fix.service"
+    )
+    
+    local storage_files=(
+        "storage-analyzer.sh"
+        "storage-cleanup.sh"
+    )
+    
+    local installer_files=(
+        "install.sh"
+    )
+    
+    local files=()
+    case "$script_type" in
+        "network")
+            files=("${network_files[@]}" "${installer_files[@]}")
+            ;;
+        "storage")
+            files=("${storage_files[@]}" "${installer_files[@]}")
+            ;;
+        "all"|*)
+            files=("${network_files[@]}" "${storage_files[@]}" "${installer_files[@]}")
+            ;;
+    esac
+    
+    local existing_files=()
+    local missing_files=()
+    
+    # Check which files exist locally
+    for file in "${files[@]}"; do
+        if [[ -f "$file" ]]; then
+            existing_files+=("$file")
+        else
+            missing_files+=("$file")
+        fi
+    done
+    
+    # If no files exist locally, proceed with normal download
+    if [[ ${#existing_files[@]} -eq 0 ]]; then
+        print_status "$YELLOW" "No existing files found, proceeding with download..."
+        return 1  # Signal to proceed with download
+    fi
+    
+    # If some files exist, check for updates
+    if [[ ${#existing_files[@]} -gt 0 ]]; then
+        print_status "$YELLOW" "Found existing files:"
+        for file in "${existing_files[@]}"; do
+            local size=$(stat -c%s "$file" 2>/dev/null || echo "unknown")
+            local date=$(stat -c%y "$file" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+            echo "  ✓ $file ($size bytes, $date)"
+        done
+        echo ""
+        
+        if [[ "$force_check" == "true" ]]; then
+            print_status "$YELLOW" "Would you like to check for updates?"
+            echo "1. Use existing files (faster)"
+            echo "2. Check for updates from repository"
+            echo "3. Cancel installation"
+            echo ""
+            echo -n "Enter your choice (1-3): "
+            read -r choice
+            
+            case "$choice" in
+                1)
+                    print_status "$GREEN" "Using existing files"
+                    return 0  # Signal to use existing files
+                    ;;
+                2)
+                    print_status "$YELLOW" "Checking for updates..."
+                    # Fall through to download check
+                    ;;
+                3)
+                    print_status "$YELLOW" "Installation cancelled"
+                    exit 0
+                    ;;
+                *)
+                    print_status "$YELLOW" "Invalid choice, using existing files"
+                    return 0
+                    ;;
+            esac
+        fi
+    fi
+    
+    # Check if remote files are different
+    local updated_files=()
+    local check_failed=()
+    
+    for file in "${existing_files[@]}"; do
+        local url="$REPO_URL/$file"
+        local temp_file="${file}.tmp"
+        
+        print_status "$YELLOW" "Checking $file for updates..."
+        
+        # Download to temp file
+        local http_code=$(curl -L -w "%{http_code}" -o "$temp_file" "$url" 2>/dev/null)
+        
+        if [[ "$http_code" == "200" && -f "$temp_file" && -s "$temp_file" ]]; then
+            # Check if file contains actual content (not 404 page)
+            if grep -q "404: Not Found" "$temp_file" 2>/dev/null; then
+                print_status "$YELLOW" "  ⚠ $file not available in repository"
+                rm -f "$temp_file"
+                check_failed+=("$file")
+            else
+                # Compare files
+                if ! diff -q "$file" "$temp_file" >/dev/null 2>&1; then
+                    print_status "$GREEN" "  ✓ Update available for $file"
+                    updated_files+=("$file")
+                else
+                    print_status "$GREEN" "  ✓ $file is up to date"
+                fi
+                rm -f "$temp_file"
+            fi
+        else
+            print_status "$YELLOW" "  ⚠ Failed to check $file (HTTP: $http_code)"
+            rm -f "$temp_file"
+            check_failed+=("$file")
+        fi
+    done
+    
+    # Handle missing files
+    if [[ ${#missing_files[@]} -gt 0 ]]; then
+        print_status "$YELLOW" "Missing files that will be downloaded:"
+        for file in "${missing_files[@]}"; do
+            echo "  - $file"
+        done
+    fi
+    
+    # If updates or missing files found, ask user
+    if [[ ${#updated_files[@]} -gt 0 || ${#missing_files[@]} -gt 0 ]]; then
+        echo ""
+        if [[ ${#updated_files[@]} -gt 0 ]]; then
+            print_status "$YELLOW" "Updates available for: ${updated_files[*]}"
+        fi
+        if [[ ${#missing_files[@]} -gt 0 ]]; then
+            print_status "$YELLOW" "Missing files: ${missing_files[*]}"
+        fi
+        echo ""
+        echo "Would you like to:"
+        echo "1. Download updates and missing files"
+        echo "2. Use existing files (skip updates)"
+        echo "3. Cancel installation"
+        echo ""
+        echo -n "Enter your choice (1-3): "
+        read -r choice
+        
+        case "$choice" in
+            1)
+                print_status "$GREEN" "Downloading updates and missing files..."
+                return 1  # Signal to proceed with download
+                ;;
+            2)
+                print_status "$YELLOW" "Using existing files, skipping updates"
+                return 0  # Signal to use existing files
+                ;;
+            3)
+                print_status "$YELLOW" "Installation cancelled"
+                exit 0
+                ;;
+            *)
+                print_status "$YELLOW" "Invalid choice, using existing files"
+                return 0
+                ;;
+        esac
+    fi
+    
+    # All files are up to date
+    print_status "$GREEN" "All files are up to date!"
+    if [[ "$force_check" == "true" ]]; then
+        echo ""
+        print_status "$BLUE" "Update check summary:"
+        echo "  ✓ Total files checked: ${#existing_files[@]}"
+        echo "  ✓ Files up to date: ${#existing_files[@]}"
+        echo "  ✓ Updates available: 0"
+        echo "  ✓ Check failed: ${#check_failed[@]}"
+        [[ ${#check_failed[@]} -gt 0 ]] && echo "  ⚠ Failed to check: ${check_failed[*]}"
+    fi
+    return 0  # Signal to use existing files
+}
+
+# Function to download required files from the repository
+download_scripts() {
+    local script_type="${1:-all}"  # all, network, storage
+    
+    print_status "$BLUE" "Downloading scripts from repository..."
+    
+    local network_files=(
+        "fix-network.sh"
+        "network-monitor.sh"
+        "network-fix.service"
+    )
+    
+    local storage_files=(
+        "storage-analyzer.sh"
+        "storage-cleanup.sh"
+    )
+    
+    local files=()
+    case "$script_type" in
+        "network")
+            files=("${network_files[@]}")
+            print_status "$YELLOW" "Downloading network scripts only..."
+            ;;
+        "storage")
+            files=("${storage_files[@]}")
+            print_status "$YELLOW" "Downloading storage scripts only..."
+            ;;
+        "all"|*)
+            files=("${network_files[@]}" "${storage_files[@]}")
+            print_status "$YELLOW" "Downloading all scripts..."
+            ;;
+    esac
+    
+    local download_success=true
+    local downloaded_files=()
+    local failed_files=()
+    local total_files=${#files[@]}
+    local current_file=0
+    
+    for file in "${files[@]}"; do
+        ((current_file++))
+        local url="$REPO_URL/$file"
+        print_status "$YELLOW" "[$current_file/$total_files] Downloading $file..."
+        
+        # Get file size for progress if possible
+        local file_size=$(curl -sI "$url" 2>/dev/null | grep -i content-length | cut -d' ' -f2 | tr -d '\r')
+        
+        # Try to download with progress bar
+        local http_code
+        if [[ -n "$file_size" && "$file_size" -gt 0 ]]; then
+            # Show progress bar for larger files
+            http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" --progress-bar 2>/dev/null)
+        else
+            # Standard download for smaller files or when size unknown
+            http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" 2>/dev/null)
+        fi
+        
+        if [[ "$http_code" == "200" && -f "$file" && -s "$file" ]]; then
+            # Check if file contains actual content (not 404 page)
+            if grep -q "404: Not Found" "$file" 2>/dev/null; then
+                print_status "$RED" "✗ $file not found (404 error)"
+                rm -f "$file"
+                failed_files+=("$file")
+                download_success=false
+            else
+                local final_size=$(stat -c%s "$file" 2>/dev/null || echo "unknown")
+                print_status "$GREEN" "✓ Downloaded $file successfully ($final_size bytes)"
+                downloaded_files+=("$file")
+            fi
+        else
+            print_status "$RED" "✗ Failed to download $file (HTTP: $http_code)"
+            rm -f "$file"  # Remove empty or failed file
+            failed_files+=("$file")
+            download_success=false
+        fi
+    done
+    
+    echo ""
+    if [[ "$download_success" == true ]]; then
+        print_status "$GREEN" "All files downloaded successfully!"
+        echo ""
+        print_status "$BLUE" "Download Summary:"
+        echo "  ✓ Total files: $total_files"
+        echo "  ✓ Successfully downloaded: ${#downloaded_files[@]}"
+        echo "  ✓ Files: ${downloaded_files[*]}"
         return 0
     else
+        print_status "$RED" "Failed to download some files:"
+        for file in "${failed_files[@]}"; do
+            echo "  ✗ $file"
+        done
+        echo ""
+        print_status "$BLUE" "Download Summary:"
+        echo "  ✓ Total files: $total_files"
+        echo "  ✓ Successfully downloaded: ${#downloaded_files[@]}"
+        echo "  ✗ Failed downloads: ${#failed_files[@]}"
+        echo ""
+        print_status "$YELLOW" "Possible causes:"
+        echo "  - Files not yet merged to main branch"
+        echo "  - Network connectivity issues"
+        echo "  - Repository structure changes"
+        echo ""
+        print_status "$YELLOW" "Solutions:"
+        echo "  - Wait for PR to be merged to main branch"
+        echo "  - Download files manually from the PR branch"
+        echo "  - Check repository URL: $REPO_URL"
+        echo "  - Use local files if you have them"
         return 1
     fi
 }
 
-# Function to check if interface is a bridge
-is_bridge_interface() {
-    local interface="$1"
-    [[ -d "/sys/class/net/$interface/bridge" ]]
-}
-
-# Function to get bridge members (physical interfaces attached to bridge)
-get_bridge_members() {
-    local bridge="$1"
-    if [[ -d "/sys/class/net/$bridge/brif" ]]; then
-        ls "/sys/class/net/$bridge/brif" 2>/dev/null | tr '\n' ' '
-    fi
-}
-
-# Function to detect hardware hangs from kernel logs
-detect_hardware_hang() {
-    local interface="$1"
-    local recent_minutes=5
+# Function to install scripts
+install_scripts() {
+    local script_type="${1:-all}"  # all, network, storage
     
-    # Check for hardware hang messages in recent kernel logs
-    if dmesg -T | tail -200 | grep -i "detected hardware unit hang" | grep "$interface" >/dev/null 2>&1; then
-        return 0
-    fi
+    print_status "$BLUE" "Installing Proxmox automation scripts..."
     
-    # Also check journalctl for recent hang messages
-    if journalctl --since="$recent_minutes minutes ago" --no-pager 2>/dev/null | grep -i "detected hardware unit hang" | grep "$interface" >/dev/null 2>&1; then
-        return 0
-    fi
+    local installed_count=0
     
-    return 1
-}
-
-# Function to get network controller driver
-get_interface_driver() {
-    local interface="$1"
-    if [[ -L "/sys/class/net/$interface/device/driver" ]]; then
-        basename $(readlink "/sys/class/net/$interface/device/driver")
-    fi
-}
-
-# Function to check if interface is virtual (not physical hardware)
-is_virtual_interface() {
-    local interface="$1"
-    
-    # Common virtual interface patterns in Proxmox
-    if [[ "$interface" =~ ^(fwpr|fwbr|fwln|veth|tap|tun|vmbr|lo|dummy|bond|team).*$ ]]; then
-        return 0
-    fi
-    
-    # Check if interface has no physical device (virtual)
-    if [[ ! -e "/sys/class/net/$interface/device" ]]; then
-        return 0
-    fi
-    
-    # Additional check for virtual drivers
-    local driver=$(get_interface_driver "$interface")
-    if [[ "$driver" =~ ^(veth|dummy|bridge|bonding|team).*$ ]]; then
-        return 0
-    fi
-    
-    return 1
-}
-
-# Function to disable problematic ethtool features (Proxmox forum workaround)
-disable_problematic_features() {
-    local interface="$1"
-    
-    echo -e "${YELLOW}Applying Proxmox forum workaround: disabling problematic features...${NC}"
-    log_message "INFO" "Disabling problematic ethtool features for $interface (Proxmox forum workaround)"
-    
-    # Disable features known to cause issues with Intel e1000e in recent Proxmox kernels
-    # Based on: https://forum.proxmox.com/threads/proxmox-6-8-12-9-pve-kernel-has-introduced-a-problem-with-e1000e-driver-and-network-connection-lost-after-some-hours.164439/
-    local features_to_disable="gso gro tso tx rx rxvlan txvlan sg"
-    local features_applied=()
-    
-    for feature in $features_to_disable; do
-        if ethtool -K "$interface" "$feature" off 2>/dev/null; then
-            log_message "INFO" "Disabled $feature for $interface"
-            features_applied+=("$feature")
-        else
-            log_message "WARN" "Failed to disable $feature for $interface"
+    # Install network scripts
+    if [[ "$script_type" == "all" || "$script_type" == "network" ]]; then
+        if [[ -f "fix-network.sh" ]]; then
+            cp fix-network.sh "$INSTALL_DIR/fix-network.sh"
+            chmod +x "$INSTALL_DIR/fix-network.sh"
+            ln -sf "$INSTALL_DIR/fix-network.sh" "$INSTALL_DIR/fix-network"
+            ((installed_count++))
         fi
-    done
-    
-    # Log current feature status
-    log_message "INFO" "Current features for $interface: $(ethtool -k "$interface" 2>/dev/null | grep -E '(gso|gro|tso|tx|rx|rxvlan|txvlan|sg):' | tr '\n' ' ')"
-    
-    # Create persistent configuration if features were successfully applied
-    if [[ ${#features_applied[@]} -gt 0 ]]; then
-        create_persistent_ethtool_config "$interface" "${features_applied[@]}"
+        
+        if [[ -f "network-monitor.sh" ]]; then
+            cp network-monitor.sh "$INSTALL_DIR/network-monitor.sh"
+            chmod +x "$INSTALL_DIR/network-monitor.sh"
+            ln -sf "$INSTALL_DIR/network-monitor.sh" "$INSTALL_DIR/network-monitor"
+            ((installed_count++))
+        fi
     fi
     
-    sleep 3
-    return 0
+    # Install storage scripts
+    if [[ "$script_type" == "all" || "$script_type" == "storage" ]]; then
+        if [[ -f "storage-analyzer.sh" ]]; then
+            cp storage-analyzer.sh "$INSTALL_DIR/storage-analyzer.sh"
+            chmod +x "$INSTALL_DIR/storage-analyzer.sh"
+            ln -sf "$INSTALL_DIR/storage-analyzer.sh" "$INSTALL_DIR/storage-analyzer"
+            ((installed_count++))
+        fi
+        
+        if [[ -f "storage-cleanup.sh" ]]; then
+            cp storage-cleanup.sh "$INSTALL_DIR/storage-cleanup.sh"
+            chmod +x "$INSTALL_DIR/storage-cleanup.sh"
+            ln -sf "$INSTALL_DIR/storage-cleanup.sh" "$INSTALL_DIR/storage-cleanup"
+            ((installed_count++))
+        fi
+    fi
+    
+    if [[ $installed_count -eq 0 ]]; then
+        print_status "$RED" "No scripts were installed - no valid files found!"
+        return 1
+    fi
+    
+    print_status "$GREEN" "Scripts installed successfully! ($installed_count files)"
+    
+    # Show what was installed
+    echo "  Installed scripts:"
+    [[ -f "$INSTALL_DIR/fix-network.sh" ]] && echo "    ✓ fix-network.sh -> $INSTALL_DIR/fix-network.sh"
+    [[ -f "$INSTALL_DIR/network-monitor.sh" ]] && echo "    ✓ network-monitor.sh -> $INSTALL_DIR/network-monitor.sh"
+    [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]] && echo "    ✓ storage-analyzer.sh -> $INSTALL_DIR/storage-analyzer.sh"
+    [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]] && echo "    ✓ storage-cleanup.sh -> $INSTALL_DIR/storage-cleanup.sh"
+    echo "  Symlinks created for all installed scripts"
 }
 
-# Function to create persistent ethtool configuration
-create_persistent_ethtool_config() {
-    local interface="$1"
-    shift
-    local features=("$@")
+# Function to install systemd service
+install_service() {
+    print_status "$BLUE" "Installing systemd service..."
     
-    local config_file="/etc/systemd/system/ethtool-workaround-${interface}.service"
-    
-    echo -e "${YELLOW}Creating persistent configuration for $interface...${NC}"
-    log_message "INFO" "Creating persistent ethtool configuration for $interface"
-    
-    # Create systemd service to apply settings on boot
-    cat > "$config_file" << EOF
-[Unit]
-Description=Apply ethtool workaround for Intel e1000e hardware hang ($interface)
-After=network.target
-Wants=network.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=true
-ExecStart=/bin/bash -c 'sleep 10 && $(printf "ethtool -K $interface %s off; " "${features[@]}")'
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    if [[ -f "$config_file" ]]; then
-        # Enable the service
+    # Only install service if network monitoring is being installed
+    if [[ -f "network-fix.service" ]]; then
+        cp network-fix.service "$SERVICE_DIR/network-fix.service"
+        
+        # Reload systemd
         systemctl daemon-reload
-        if systemctl enable "ethtool-workaround-${interface}.service" 2>/dev/null; then
-            log_message "INFO" "Created and enabled persistent ethtool workaround service for $interface"
-            echo -e "${GREEN}✓ Persistent configuration created: $config_file${NC}"
-        else
-            log_message "WARN" "Created ethtool workaround service but failed to enable it"
-            echo -e "${YELLOW}⚠ Service created but not enabled: $config_file${NC}"
-        fi
+        
+        print_status "$GREEN" "Systemd service installed successfully!"
+        echo "  - Service file: $SERVICE_DIR/network-fix.service"
     else
-        log_message "ERROR" "Failed to create persistent ethtool configuration"
+        print_status "$YELLOW" "Skipping systemd service installation (network-fix.service not found)"
     fi
 }
 
-# Function to perform hardware-level reset
-hardware_reset_interface() {
-    local interface="$1"
-    local driver=$(get_interface_driver "$interface")
-    local reset_success=false
+# Function to setup logging
+setup_logging() {
+    local script_type="${1:-all}"
     
-    log_message "INFO" "Attempting hardware-level reset for $interface (driver: $driver)"
-    echo -e "${YELLOW}Performing hardware reset for $interface...${NC}"
+    print_status "$BLUE" "Setting up logging..."
     
-    # Step 1: Try ethtool reset first (if available)
-    if command -v ethtool >/dev/null 2>&1; then
-        echo -e "${YELLOW}Step 1: Attempting ethtool reset...${NC}"
-        log_message "INFO" "Attempting ethtool reset for $interface"
-        
-        # Reset the interface using ethtool
-        if ethtool -r "$interface" 2>/dev/null; then
-            log_message "INFO" "ethtool reset successful for $interface"
-            reset_success=true
-        fi
-        sleep 2
-        
-        # Try to reset specific features that might help
-        ethtool -K "$interface" rx off tx off 2>/dev/null
-        sleep 1
-        ethtool -K "$interface" rx on tx on 2>/dev/null
-        sleep 2
-    fi
+    local log_files_created=()
     
-    # Step 2: For Intel e1000e controllers, try module reload
-    if [[ "$driver" == "e1000e" ]]; then
-        echo -e "${YELLOW}Step 2: Detected Intel e1000e controller, attempting module reload...${NC}"
-        log_message "INFO" "Attempting e1000e module reload for hardware hang recovery"
-        
-        # Get PCI address for the interface
-        local pci_addr=$(basename $(readlink "/sys/class/net/$interface/device") 2>/dev/null)
-        
-        if [[ -n "$pci_addr" ]]; then
-            log_message "INFO" "Interface $interface PCI address: $pci_addr"
-            
-            # Bring interface down first
-            ip link set "$interface" down
-            sleep 2
-            
-            # Remove and reload the e1000e module
-            if lsmod | grep -q "^e1000e"; then
-                echo -e "${YELLOW}Removing e1000e module...${NC}"
-                if modprobe -r e1000e 2>/dev/null; then
-                    log_message "INFO" "e1000e module removed successfully"
-                    sleep 3
-                    
-                    echo -e "${YELLOW}Reloading e1000e module...${NC}"
-                    if modprobe e1000e 2>/dev/null; then
-                        log_message "INFO" "e1000e module reload completed successfully"
-                        reset_success=true
-                    else
-                        log_message "ERROR" "Failed to reload e1000e module"
-                    fi
-                    sleep 5
-                else
-                    log_message "WARN" "Failed to remove e1000e module (may be in use)"
-                fi
-            fi
+    # Create network log files
+    if [[ "$script_type" == "all" || "$script_type" == "network" ]]; then
+        if [[ -f "$INSTALL_DIR/fix-network.sh" ]]; then
+            touch "$LOG_DIR/network-fix.log"
+            chmod 644 "$LOG_DIR/network-fix.log"
+            log_files_created+=("$LOG_DIR/network-fix.log")
         fi
         
-        # Step 3: Apply Proxmox forum workaround (feature disabling)
-        echo -e "${YELLOW}Step 3: Applying Proxmox community workaround...${NC}"
-        disable_problematic_features "$interface"
-        
-        # If module reload failed, still mark as attempted since we applied the workaround
-        if [[ "$reset_success" == false ]]; then
-            log_message "INFO" "Module reload not successful, but applied feature workaround"
-            reset_success=true
+        if [[ -f "$INSTALL_DIR/network-monitor.sh" ]]; then
+            touch "$LOG_DIR/network-monitor.log"
+            chmod 644 "$LOG_DIR/network-monitor.log"
+            log_files_created+=("$LOG_DIR/network-monitor.log")
         fi
     fi
     
-    # Step 4: For other drivers, try generic approaches
-    if [[ "$driver" != "e1000e" && -n "$driver" ]]; then
-        echo -e "${YELLOW}Step 4: Attempting generic hardware reset for $driver driver...${NC}"
-        log_message "INFO" "Attempting generic hardware reset for $driver driver"
-        
-        # Try to reset via sysfs if available
-        local pci_addr=$(basename $(readlink "/sys/class/net/$interface/device") 2>/dev/null)
-        if [[ -n "$pci_addr" && -f "/sys/bus/pci/devices/$pci_addr/reset" ]]; then
-            echo -e "${YELLOW}Attempting PCI reset for $pci_addr...${NC}"
-            if echo 1 > "/sys/bus/pci/devices/$pci_addr/reset" 2>/dev/null; then
-                log_message "INFO" "PCI reset successful for $interface"
-                reset_success=true
-            else
-                log_message "WARN" "PCI reset failed for $interface"
-            fi
-            sleep 3
+    # Create storage log files
+    if [[ "$script_type" == "all" || "$script_type" == "storage" ]]; then
+        if [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]]; then
+            touch "$LOG_DIR/storage-analyzer.log"
+            chmod 644 "$LOG_DIR/storage-analyzer.log"
+            log_files_created+=("$LOG_DIR/storage-analyzer.log")
         fi
         
-        # Apply feature workaround for any Intel-based drivers
-        if [[ "$driver" =~ ^(e1000|igb|ixgbe|i40e).*$ ]]; then
-            echo -e "${YELLOW}Intel-based driver detected, applying feature workaround...${NC}"
-            disable_problematic_features "$interface"
-            reset_success=true
+        if [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]]; then
+            touch "$LOG_DIR/storage-cleanup.log"
+            chmod 644 "$LOG_DIR/storage-cleanup.log"
+            log_files_created+=("$LOG_DIR/storage-cleanup.log")
         fi
     fi
     
-    # Step 5: Final verification and summary
-    if [[ "$reset_success" == true ]]; then
-        echo -e "${GREEN}Hardware reset procedure completed for $interface${NC}"
-        log_message "INFO" "Hardware reset procedure completed successfully for $interface"
-    else
-        echo -e "${YELLOW}Hardware reset attempted but success uncertain for $interface${NC}"
-        log_message "WARN" "Hardware reset attempted for $interface but success uncertain"
-    fi
-    
-    return 0
-}
-
-# Function to get primary network interface
-get_primary_interface() {
-    # Get the interface used for the default route
-    local interface=$(ip route show default | head -1 | sed 's/.*dev \([^ ]*\).*/\1/')
-    
-    if [[ -z "$interface" ]]; then
-        # Fallback: get first non-loopback interface
-        interface=$(ip -o link show | grep -v "lo:" | head -1 | cut -d: -f2 | tr -d ' ')
-    fi
-    
-    echo "$interface"
-}
-
-# Function to restart network interface
-restart_interface() {
-    local interface="$1"
-    local is_bridge=false
-    local bridge_members=""
-    
-    log_message "INFO" "Attempting to restart interface: $interface"
-    
-    # Check if this is a bridge interface (common in Proxmox)
-    if is_bridge_interface "$interface"; then
-        is_bridge=true
-        bridge_members=$(get_bridge_members "$interface")
-        log_message "INFO" "Interface $interface is a bridge with members: $bridge_members"
-        echo -e "${YELLOW}Detected bridge interface $interface with members: $bridge_members${NC}"
-    fi
-    
-    # If it's a bridge, restart underlying physical interfaces first
-    if [[ "$is_bridge" == true && -n "$bridge_members" ]]; then
-        local physical_members=0
-        local virtual_members=0
-        
-        for member in $bridge_members; do
-            # Skip virtual interfaces (VM/firewall interfaces)
-            if is_virtual_interface "$member"; then
-                log_message "DEBUG" "Skipping virtual interface: $member"
-                ((virtual_members++))
-                continue
-            fi
-            
-            ((physical_members++))
-            echo -e "${YELLOW}Restarting bridge member: $member${NC}"
-            log_message "INFO" "Restarting physical bridge member: $member"
-            
-            # Get driver info for troubleshooting
-            local driver=$(get_interface_driver "$member")
-            log_message "INFO" "Bridge member $member uses driver: $driver"
-            
-            # Check if this interface has hardware hang issues OR is e1000e (proactive)
-            local needs_hardware_reset=false
-            if detect_hardware_hang "$member"; then
-                echo -e "${RED}Hardware hang detected for $member, using hardware reset${NC}"
-                log_message "WARN" "Hardware hang detected for $member, attempting hardware reset"
-                needs_hardware_reset=true
-            elif [[ "$driver" == "e1000e" ]]; then
-                echo -e "${YELLOW}Intel e1000e controller detected for bridge member $member, using proactive hardware reset${NC}"
-                log_message "INFO" "Intel e1000e controller detected for bridge member $member, applying proactive hardware reset"
-                needs_hardware_reset=true
-            fi
-            
-            if [[ "$needs_hardware_reset" == true ]]; then
-                # Use hardware reset for hung interfaces
-                hardware_reset_interface "$member"
-            else
-                # Standard software reset
-                ip link set "$member" down
-                if [[ $? -eq 0 ]]; then
-                    log_message "INFO" "Bridge member $member brought down successfully"
-                else
-                    log_message "WARN" "Failed to bring down bridge member $member"
-                fi
-                
-                sleep 2
-                
-                ip link set "$member" up
-                if [[ $? -eq 0 ]]; then
-                    log_message "INFO" "Bridge member $member brought up successfully"
-                else
-                    log_message "WARN" "Failed to bring up bridge member $member"
-                fi
-                
-                sleep 3
-            fi
-        done
-        
-        # Log summary of processed interfaces
-        echo -e "${BLUE}Bridge member summary: $physical_members physical, $virtual_members virtual (skipped)${NC}"
-        log_message "INFO" "Bridge member summary: $physical_members physical interfaces processed, $virtual_members virtual interfaces skipped"
-        
-        # Extra delay for hardware resets to complete
-        echo -e "${YELLOW}Waiting for bridge members to stabilize...${NC}"
-        sleep 5
-    fi
-    
-    # Check if the main interface itself has hardware issues
-    local main_needs_hardware_reset=false
-    if detect_hardware_hang "$interface"; then
-        echo -e "${RED}Hardware hang detected for main interface $interface${NC}"
-        log_message "WARN" "Hardware hang detected for main interface $interface"
-        main_needs_hardware_reset=true
-    fi
-    
-    # For non-bridge interfaces, also check if they might benefit from hardware reset
-    if [[ "$is_bridge" == false ]]; then
-        local driver=$(get_interface_driver "$interface")
-        log_message "INFO" "Interface $interface uses driver: $driver"
-        
-        # Intel e1000e is known to have hardware hang issues
-        if [[ "$driver" == "e1000e" ]]; then
-            echo -e "${YELLOW}Intel e1000e controller detected, will use hardware reset approach${NC}"
-            log_message "INFO" "Intel e1000e controller detected for $interface"
-            main_needs_hardware_reset=true
-        fi
-    fi
-    
-    if [[ "$main_needs_hardware_reset" == true && "$is_bridge" == false ]]; then
-        # Use hardware reset for the main interface
-        hardware_reset_interface "$interface"
-    else
-        # Standard software reset for the main interface (or bridge)
-        echo -e "${YELLOW}Bringing down interface $interface...${NC}"
-        ip link set "$interface" down
-        
-        if [[ $? -eq 0 ]]; then
-            log_message "INFO" "Interface $interface brought down successfully"
-        else
-            log_message "ERROR" "Failed to bring down interface $interface"
-            return 1
-        fi
-        
-        # Wait longer for bridges
-        if [[ "$is_bridge" == true ]]; then
-            sleep 3
-        else
-            sleep 2
-        fi
-        
-        # Bring interface back up
-        echo -e "${YELLOW}Bringing up interface $interface...${NC}"
-        ip link set "$interface" up
-        
-        if [[ $? -eq 0 ]]; then
-            log_message "INFO" "Interface $interface brought up successfully"
-        else
-            log_message "ERROR" "Failed to bring up interface $interface"
-            return 1
-        fi
-    fi
-    
-    # Wait for interface to be ready (longer for bridges)
-    if [[ "$is_bridge" == true ]]; then
-        sleep 5
-    else
-        sleep 3
-    fi
-    
-    # For Proxmox, try restarting networking service
-    echo -e "${YELLOW}Restarting networking service...${NC}"
-    if systemctl restart networking; then
-        log_message "INFO" "Networking service restarted successfully"
-    else
-        log_message "WARN" "Failed to restart networking service, trying ifup/ifdown"
-        
-        # Alternative: try ifdown/ifup
-        ifdown "$interface" 2>/dev/null
-        sleep 2
-        ifup "$interface" 2>/dev/null
-        
-        if [[ $? -eq 0 ]]; then
-            log_message "INFO" "Interface $interface restarted with ifup/ifdown"
-        else
-            log_message "WARN" "ifup/ifdown also failed, but interface restart may still work"
-        fi
-    fi
-    
-    # Wait longer for network to stabilize (especially for bridges)
-    if [[ "$is_bridge" == true ]]; then
-        echo -e "${YELLOW}Waiting for bridge to stabilize...${NC}"
-        sleep 10
-    else
-        sleep 5
-    fi
-    
-    # Additional diagnostics
-    log_message "INFO" "Interface status after restart: $(ip link show "$interface" | grep -E 'state|flags')"
-    
-    # Try DHCP renewal if interface appears to be up but no connectivity
-    echo -e "${YELLOW}Attempting DHCP renewal...${NC}"
-    log_message "INFO" "Attempting DHCP renewal for interface $interface"
-    
-    # Kill any existing dhclient processes for this interface
-    pkill -f "dhclient.*$interface" 2>/dev/null
-    sleep 1
-    
-    # Try to renew DHCP lease
-    if dhclient -r "$interface" 2>/dev/null; then
-        log_message "INFO" "DHCP release successful for $interface"
-        sleep 2
-        if dhclient "$interface" 2>/dev/null; then
-            log_message "INFO" "DHCP renewal successful for $interface"
-        else
-            log_message "WARN" "DHCP renewal failed for $interface"
-        fi
-    else
-        log_message "WARN" "DHCP release failed, trying direct renewal"
-        dhclient "$interface" 2>/dev/null
-    fi
-    
-    # Final wait for DHCP to complete
-    sleep 5
-    
-    return 0
-}
-
-# Function to verify network fix
-verify_fix() {
-    local interface="$1"
-    local max_attempts=15  # Increased for bridges
-    local attempt=1
-    local wait_time=3      # Increased wait time
-    
-    echo -e "${YELLOW}Verifying network connectivity...${NC}"
-    
-    # If it's a bridge, be more patient
-    if is_bridge_interface "$interface"; then
-        max_attempts=20
-        wait_time=5
-        echo -e "${YELLOW}Bridge interface detected, allowing extra time for stabilization...${NC}"
-    fi
-    
-    while [[ $attempt -le $max_attempts ]]; do
-        # Additional diagnostics on failed attempts
-        if [[ $attempt -gt 5 ]]; then
-            log_message "DEBUG" "Interface $interface status: $(ip addr show "$interface" 2>/dev/null | grep 'inet\|state')"
-            log_message "DEBUG" "Default route: $(ip route show default 2>/dev/null)"
-        fi
-        
-        if check_connectivity "$PING_TARGET" "$CONNECTIVITY_TIMEOUT"; then
-            echo -e "${GREEN}Network connectivity restored!${NC}"
-            log_message "INFO" "Network connectivity verified after $attempt attempts"
-            return 0
-        fi
-        
-        echo "Attempt $attempt/$max_attempts: Network still not reachable, waiting ${wait_time}s..."
-        
-        # Try alternative connectivity tests on later attempts
-        if [[ $attempt -gt 10 ]]; then
-            echo "Trying alternative connectivity tests..."
-            # Try ping to gateway if we can find it
-            local gateway=$(ip route show default 2>/dev/null | head -1 | sed 's/.*via \([^ ]*\).*/\1/')
-            if [[ -n "$gateway" && "$gateway" != "$PING_TARGET" ]]; then
-                echo "Testing connectivity to gateway: $gateway"
-                if ping -c 1 -W 3 "$gateway" &>/dev/null; then
-                    echo -e "${YELLOW}Gateway is reachable, DNS might be the issue${NC}"
-                    log_message "INFO" "Gateway $gateway is reachable but external connectivity failed"
-                fi
-            fi
-            
-            # Try alternative DNS servers
-            for alt_dns in "1.1.1.1" "208.67.222.222"; do
-                if [[ "$alt_dns" != "$PING_TARGET" ]]; then
-                    echo "Testing connectivity to $alt_dns..."
-                    if ping -c 1 -W 3 "$alt_dns" &>/dev/null; then
-                        echo -e "${GREEN}Alternative connectivity test successful to $alt_dns${NC}"
-                        log_message "INFO" "Network connectivity verified using alternative target $alt_dns after $attempt attempts"
-                        return 0
-                    fi
-                fi
-            done
-        fi
-        
-        sleep "$wait_time"
-        ((attempt++))
+    print_status "$GREEN" "Logging setup complete!"
+    echo "  Created log files:"
+    for log in "${log_files_created[@]}"; do
+        echo "    ✓ $log"
     done
-    
-    echo -e "${RED}Network connectivity could not be verified after $max_attempts attempts${NC}"
-    log_message "ERROR" "Network connectivity verification failed after $max_attempts attempts"
-    
-    # Final diagnostics
-    echo -e "${YELLOW}Final diagnostic information:${NC}"
-    echo "Interface status:"
-    ip addr show "$interface" 2>/dev/null || echo "Could not get interface status"
-    echo "Routing table:"
-    ip route show 2>/dev/null || echo "Could not get routing table"
-    echo "DNS resolution test:"
-    nslookup google.com 2>/dev/null || echo "DNS resolution failed"
-    
-    return 1
 }
 
-# Main function
-main() {
-    local interface="$1"
-    local retry_count=0
+# Function to setup automation
+setup_automation() {
+    print_status "$BLUE" "=== Setup Network Monitoring Automation ==="
+    echo ""
+    echo "Would you like to setup automatic network monitoring? (y/N)"
+    read -r setup_auto
     
-    echo -e "${YELLOW}=== Proxmox Network Interface Restart Script ===${NC}"
-    log_message "INFO" "Script started"
+    if [[ "$setup_auto" =~ ^[Yy]$ ]]; then
+        echo ""
+        print_status "$YELLOW" "Choose monitoring method:"
+        echo "1. Systemd Service (recommended - continuous monitoring)"
+        echo "2. Cron Job (periodic checks every 5 minutes)"
+        echo "3. Skip automation setup"
+        echo ""
+        echo -n "Enter your choice (1-3): "
+        read -r choice
+        
+        case "$choice" in
+            1)
+                setup_systemd_monitoring
+                ;;
+            2)
+                setup_cron_monitoring
+                ;;
+            3)
+                print_status "$YELLOW" "Automation setup skipped. You can set it up later."
+                ;;
+            *)
+                print_status "$YELLOW" "Invalid choice. Automation setup skipped."
+                ;;
+        esac
+    else
+        print_status "$YELLOW" "Automation setup skipped."
+    fi
+}
+
+# Function to setup systemd monitoring
+setup_systemd_monitoring() {
+    print_status "$BLUE" "Setting up systemd service monitoring..."
+    
+    if systemctl enable network-fix.service 2>/dev/null; then
+        print_status "$GREEN" "✓ Service enabled successfully"
+        
+        if systemctl start network-fix.service 2>/dev/null; then
+            print_status "$GREEN" "✓ Service started successfully"
+            
+            # Give service a moment to start
+            sleep 2
+            
+            if systemctl is-active network-fix.service >/dev/null 2>&1; then
+                print_status "$GREEN" "✓ Service is running"
+                echo ""
+                print_status "$BLUE" "Monitoring service commands:"
+                echo "  View status: sudo systemctl status network-fix.service"
+                echo "  View logs:   sudo journalctl -u network-fix.service -f"
+                echo "  Stop:        sudo systemctl stop network-fix.service"
+                echo "  Disable:     sudo systemctl disable network-fix.service"
+            else
+                print_status "$YELLOW" "⚠ Service started but may not be running properly"
+                echo "  Check status: sudo systemctl status network-fix.service"
+            fi
+        else
+            print_status "$RED" "✗ Failed to start service"
+            echo "  Check logs: sudo journalctl -u network-fix.service"
+        fi
+    else
+        print_status "$RED" "✗ Failed to enable service"
+    fi
+}
+
+# Function to setup cron monitoring
+setup_cron_monitoring() {
+    print_status "$BLUE" "Setting up cron job monitoring..."
+    
+    local cron_line="*/5 * * * * /usr/local/bin/network-monitor check >/dev/null 2>&1"
+    local temp_cron="/tmp/crontab.tmp"
+    
+    # Get current crontab
+    if crontab -l >/dev/null 2>&1; then
+        crontab -l > "$temp_cron"
+        
+        # Check if our cron job already exists
+        if grep -q "network-monitor check" "$temp_cron"; then
+            print_status "$YELLOW" "⚠ Cron job already exists. Not adding duplicate."
+            rm -f "$temp_cron"
+            return
+        fi
+    else
+        # No existing crontab, create empty one
+        touch "$temp_cron"
+    fi
+    
+    # Add our cron job
+    echo "$cron_line" >> "$temp_cron"
+    
+    # Install the new crontab
+    if crontab "$temp_cron" 2>/dev/null; then
+        print_status "$GREEN" "✓ Cron job added successfully"
+        echo ""
+        print_status "$BLUE" "Cron job details:"
+        echo "  Schedule: Every 5 minutes"
+        echo "  Command:  $cron_line"
+        echo ""
+        print_status "$BLUE" "Cron management commands:"
+        echo "  View cron jobs: sudo crontab -l"
+        echo "  Edit cron jobs: sudo crontab -e"
+        echo "  View logs:      sudo tail -f /var/log/network-monitor.log"
+    else
+        print_status "$RED" "✗ Failed to add cron job"
+        echo "  You can manually add this line to crontab:"
+        echo "  $cron_line"
+    fi
+    
+    # Clean up
+    rm -f "$temp_cron"
+}
+
+# Function to show usage options
+show_usage_options() {
+    local script_type="${1:-all}"
+    
+    print_status "$BLUE" "=== Installation Complete! ==="
+    echo ""
+    
+    if [[ "$script_type" == "all" || "$script_type" == "network" ]]; then
+        if [[ -x "$INSTALL_DIR/fix-network.sh" ]]; then
+            print_status "$YELLOW" "Network Tools Usage:"
+            echo "  sudo fix-network            # Auto-detect interface"
+            echo "  sudo fix-network eth0       # Specific interface"
+            echo "  sudo network-monitor check  # Single connectivity check"
+            echo "  network-monitor status      # View recent logs"
+            echo ""
+        fi
+    fi
+    
+    if [[ "$script_type" == "all" || "$script_type" == "storage" ]]; then
+        if [[ -x "$INSTALL_DIR/storage-analyzer.sh" ]]; then
+            print_status "$YELLOW" "Storage Tools Usage:"
+            echo "  sudo storage-analyzer       # Analyze storage usage"
+            echo "  sudo storage-cleanup        # Interactive cleanup"
+            echo "  sudo storage-cleanup all    # Auto cleanup all categories"
+            echo ""
+        fi
+    fi
+    
+    print_status "$YELLOW" "View Logs:"
+    [[ -f "$LOG_DIR/network-fix.log" ]] && echo "  sudo tail -f /var/log/network-fix.log"
+    [[ -f "$LOG_DIR/network-monitor.log" ]] && echo "  sudo tail -f /var/log/network-monitor.log"
+    [[ -f "$LOG_DIR/storage-analyzer.log" ]] && echo "  sudo tail -f /var/log/storage-analyzer.log"
+    [[ -f "$LOG_DIR/storage-cleanup.log" ]] && echo "  sudo tail -f /var/log/storage-cleanup.log"
+    echo ""
+    print_status "$GREEN" "For more information, see README.md"
+}
+
+# Function to test installation
+test_installation() {
+    local script_type="${1:-all}"
+    
+    print_status "$BLUE" "Testing installation..."
+    
+    local tests_passed=0
+    local tests_total=0
+    
+    # Test network scripts
+    if [[ "$script_type" == "all" || "$script_type" == "network" ]]; then
+        ((tests_total++))
+        if [[ -x "$INSTALL_DIR/fix-network.sh" ]]; then
+            print_status "$GREEN" "✓ fix-network.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ fix-network.sh is not executable (may not be installed)"
+        fi
+        
+        ((tests_total++))
+        if [[ -x "$INSTALL_DIR/network-monitor.sh" ]]; then
+            print_status "$GREEN" "✓ network-monitor.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ network-monitor.sh is not executable (may not be installed)"
+        fi
+        
+        # Test help commands for network scripts
+        if [[ -x "$INSTALL_DIR/fix-network.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/fix-network.sh" --help &>/dev/null; then
+                print_status "$GREEN" "✓ fix-network help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ fix-network help failed"
+            fi
+        fi
+        
+        if [[ -x "$INSTALL_DIR/network-monitor.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/network-monitor.sh" help &>/dev/null; then
+                print_status "$GREEN" "✓ network-monitor help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ network-monitor help failed"
+            fi
+        fi
+        
+        # Test service file
+        ((tests_total++))
+        if [[ -f "$SERVICE_DIR/network-fix.service" ]]; then
+            print_status "$GREEN" "✓ systemd service file installed"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ systemd service file not found (may not be installed)"
+        fi
+    fi
+    
+    # Test storage scripts
+    if [[ "$script_type" == "all" || "$script_type" == "storage" ]]; then
+        ((tests_total++))
+        if [[ -x "$INSTALL_DIR/storage-analyzer.sh" ]]; then
+            print_status "$GREEN" "✓ storage-analyzer.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ storage-analyzer.sh is not executable (may not be installed)"
+        fi
+        
+        ((tests_total++))
+        if [[ -x "$INSTALL_DIR/storage-cleanup.sh" ]]; then
+            print_status "$GREEN" "✓ storage-cleanup.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ storage-cleanup.sh is not executable (may not be installed)"
+        fi
+        
+        # Test help commands for storage scripts
+        if [[ -x "$INSTALL_DIR/storage-analyzer.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/storage-analyzer.sh" --help &>/dev/null; then
+                print_status "$GREEN" "✓ storage-analyzer help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ storage-analyzer help failed"
+            fi
+        fi
+        
+        if [[ -x "$INSTALL_DIR/storage-cleanup.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/storage-cleanup.sh" --help &>/dev/null; then
+                print_status "$GREEN" "✓ storage-cleanup help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ storage-cleanup help failed"
+            fi
+        fi
+    fi
+    
+    echo ""
+    print_status "$BLUE" "Test Summary: $tests_passed/$tests_total tests passed"
+    
+    if [[ $tests_passed -eq $tests_total ]]; then
+        print_status "$GREEN" "✓ All tests passed!"
+        return 0
+    else
+        print_status "$YELLOW" "⚠ Some tests failed or components not installed"
+        return 1
+    fi
+}
+
+# Main installation function
+main() {
+    local script_type="${1:-all}"  # all, network, storage
+    
+    print_status "$BLUE" "=== Proxmox Automation Tools Installation ==="
+    echo ""
     
     # Check if running as root
     check_root
     
-    # Create log file if it doesn't exist
-    touch "$LOG_FILE"
+    # Define files needed based on script type
+    local network_files=("fix-network.sh" "network-monitor.sh" "network-fix.service")
+    local storage_files=("storage-analyzer.sh" "storage-cleanup.sh")
+    local required_files=()
     
-    # Get interface if not provided
-    if [[ -z "$interface" ]]; then
-        interface=$(get_primary_interface)
-        if [[ -z "$interface" ]]; then
-            echo -e "${RED}Error: Could not determine primary network interface${NC}"
-            log_message "ERROR" "Could not determine primary network interface"
+    case "$script_type" in
+        "network")
+            required_files=("${network_files[@]}")
+            print_status "$YELLOW" "Installing network tools only..."
+            ;;
+        "storage")
+            required_files=("${storage_files[@]}")
+            print_status "$YELLOW" "Installing storage tools only..."
+            ;;
+        "all"|*)
+            required_files=("${network_files[@]}" "${storage_files[@]}")
+            print_status "$YELLOW" "Installing all tools..."
+            ;;
+    esac
+    
+    # Check if required files exist
+    local missing_files=()
+    for file in "${required_files[@]}"; do
+        [[ ! -f "$file" ]] && missing_files+=("$file")
+    done
+    
+    # Check for updates or missing files
+    print_status "$BLUE" "Checking for script updates..."
+    if ! check_for_updates "$script_type" "true"; then
+        # check_for_updates returned 1, meaning we should download
+        if [[ ${#missing_files[@]} -gt 0 ]]; then
+            print_status "$YELLOW" "Missing required files, attempting to download from repository..."
+            printf ' - %s\n' "${missing_files[@]}"
+            echo ""
+        fi
+        
+        # Attempt to download missing files
+        if ! download_scripts "$script_type"; then
+            print_status "$RED" "Failed to download required files."
+            print_status "$YELLOW" "Please manually download the files or run this script from the directory containing all the files."
             exit 1
         fi
-    fi
-    
-    echo "Using network interface: $interface"
-    log_message "INFO" "Using network interface: $interface"
-    
-    # Check if interface exists
-    if ! ip link show "$interface" &>/dev/null; then
-        echo -e "${RED}Error: Interface $interface does not exist${NC}"
-        log_message "ERROR" "Interface $interface does not exist"
-        exit 1
-    fi
-    
-    # Check current connectivity
-    echo "Checking current network connectivity..."
-    if check_connectivity "$PING_TARGET" "$CONNECTIVITY_TIMEOUT"; then
-        echo -e "${GREEN}Network appears to be working. Are you sure you want to restart the interface? (y/N)${NC}"
-        read -r response
-        if [[ ! "$response" =~ ^[Yy]$ ]]; then
-            echo "Aborted by user."
-            log_message "INFO" "Script aborted by user - network was working"
-            exit 0
+        
+        # Verify files were downloaded
+        local still_missing=()
+        for file in "${required_files[@]}"; do
+            [[ ! -f "$file" ]] && still_missing+=("$file")
+        done
+        
+        if [[ ${#still_missing[@]} -gt 0 ]]; then
+            print_status "$RED" "Error: Still missing files after download attempt:"
+            printf ' - %s\n' "${still_missing[@]}"
+            exit 1
         fi
     else
-        echo -e "${RED}Network connectivity issue detected. Proceeding with interface restart...${NC}"
-        log_message "WARN" "Network connectivity issue detected"
+        print_status "$GREEN" "✓ Update check completed - using existing files"
     fi
     
-    # Attempt to fix network with retries
-    while [[ $retry_count -lt $MAX_RETRIES ]]; do
-        ((retry_count++))
-        
-        echo -e "${YELLOW}Attempt $retry_count/$MAX_RETRIES to restart network interface...${NC}"
-        
-        if restart_interface "$interface"; then
-            # Verify the fix worked
-            if verify_fix "$interface"; then
-                echo -e "${GREEN}Network interface restart completed successfully!${NC}"
-                log_message "INFO" "Network interface restart completed successfully on attempt $retry_count"
-                exit 0
-            fi
+    # Perform installation
+    install_scripts "$script_type"
+    install_service
+    setup_logging "$script_type"
+    
+    # Test installation
+    if test_installation "$script_type"; then
+        show_usage_options "$script_type"
+        if [[ "$script_type" == "all" || "$script_type" == "network" ]]; then
+            setup_automation
         fi
+        exit 0
+    else
+        print_status "$RED" "Installation completed but tests failed. Please check the output above."
+        exit 1
+    fi
+}
+
+# Function for interactive mode
+interactive_mode() {
+    print_status "$BLUE" "=== Proxmox Automation Tools Setup ==="
+    
+    # Auto-check for updates when script starts
+    auto_check_updates
+    
+    echo ""
+    print_status "$YELLOW" "What would you like to do?"
+    echo "1. Download and install all Proxmox tools (network + storage)"
+    echo "2. Download and install network tools only"
+    echo "3. Download and install storage tools only"
+    echo "4. Download scripts only (no installation)"
+    echo "5. Check for script updates"
+    echo "6. Uninstall Proxmox tools"
+    echo "7. Test current installation"
+    echo "8. Exit"
+    echo ""
+    echo -n "Enter your choice (1-8): "
+    read -r choice
+    
+    case "$choice" in
+        1)
+            echo ""
+            main "all"
+            ;;
+        2)
+            echo ""
+            main "network"
+            ;;
+        3)
+            echo ""
+            main "storage"
+            ;;
+        4)
+            echo ""
+            select_download_type
+            ;;
+        5)
+            echo ""
+            manual_update_check
+            ;;
+        6)
+            echo ""
+            uninstall_tools "interactive"
+            ;;
+        7)
+            echo ""
+            check_root
+            test_installation
+            ;;
+        8)
+            print_status "$YELLOW" "Exiting..."
+            exit 0
+            ;;
+        *)
+            print_status "$RED" "Invalid choice. Please run the script again."
+            exit 1
+            ;;
+    esac
+}
+
+# Function to select download type
+select_download_type() {
+    print_status "$BLUE" "=== Download Scripts Only ==="
+    echo ""
+    print_status "$YELLOW" "What would you like to download?"
+    echo "1. All scripts (network + storage)"
+    echo "2. Network scripts only"
+    echo "3. Storage scripts only"
+    echo "4. Back to main menu"
+    echo ""
+    echo -n "Enter your choice (1-4): "
+    read -r choice
+    
+    case "$choice" in
+        1)
+            echo ""
+            print_status "$BLUE" "Downloading all Proxmox tools..."
+            if download_scripts "all"; then
+                print_status "$GREEN" "Download completed successfully!"
+                print_status "$YELLOW" "Run '$0 install' to install the downloaded scripts."
+            else
+                print_status "$RED" "Download failed!"
+                exit 1
+            fi
+            ;;
+        2)
+            echo ""
+            print_status "$BLUE" "Downloading network tools..."
+            if download_scripts "network"; then
+                print_status "$GREEN" "Download completed successfully!"
+                print_status "$YELLOW" "Run '$0 install-network' to install the downloaded scripts."
+            else
+                print_status "$RED" "Download failed!"
+                exit 1
+            fi
+            ;;
+        3)
+            echo ""
+            print_status "$BLUE" "Downloading storage tools..."
+            if download_scripts "storage"; then
+                print_status "$GREEN" "Download completed successfully!"
+                print_status "$YELLOW" "Run '$0 install-storage' to install the downloaded scripts."
+            else
+                print_status "$RED" "Download failed!"
+                exit 1
+            fi
+            ;;
+        4)
+            interactive_mode
+            ;;
+        *)
+            print_status "$RED" "Invalid choice. Please run the script again."
+            exit 1
+            ;;
+    esac
+}
+
+# Function to handle uninstall
+uninstall_tools() {
+    local script_type="${1:-interactive}"
+    
+    if [[ "$script_type" == "interactive" ]]; then
+        select_uninstall_type
+        return
+    fi
+    
+    print_status "$BLUE" "Uninstalling Proxmox Automation Tools..."
+    
+    local removed_files=()
+    
+    # Stop and disable service for network tools
+    if [[ "$script_type" == "all" || "$script_type" == "network" ]]; then
+        systemctl stop network-fix.service 2>/dev/null
+        systemctl disable network-fix.service 2>/dev/null
+    fi
+    
+    # Remove network files
+    if [[ "$script_type" == "all" || "$script_type" == "network" ]]; then
+        [[ -f "$INSTALL_DIR/fix-network.sh" ]] && rm -f "$INSTALL_DIR/fix-network.sh" && removed_files+=("fix-network.sh")
+        [[ -f "$INSTALL_DIR/network-monitor.sh" ]] && rm -f "$INSTALL_DIR/network-monitor.sh" && removed_files+=("network-monitor.sh")
+        [[ -f "$INSTALL_DIR/fix-network" ]] && rm -f "$INSTALL_DIR/fix-network"
+        [[ -f "$INSTALL_DIR/network-monitor" ]] && rm -f "$INSTALL_DIR/network-monitor"
+        [[ -f "$SERVICE_DIR/network-fix.service" ]] && rm -f "$SERVICE_DIR/network-fix.service" && removed_files+=("network-fix.service")
         
-        if [[ $retry_count -lt $MAX_RETRIES ]]; then
-            echo -e "${YELLOW}Retry $retry_count failed. Waiting $RETRY_DELAY seconds before next attempt...${NC}"
-            sleep "$RETRY_DELAY"
+        # Remove ethtool workaround services
+        rm -f "$SERVICE_DIR/ethtool-workaround-"*.service 2>/dev/null
+        
+        # Remove cron job if it exists
+        if crontab -l 2>/dev/null | grep -q "network-monitor check"; then
+            print_status "$YELLOW" "Removing cron job..."
+            local temp_cron="/tmp/crontab.tmp"
+            crontab -l | grep -v "network-monitor check" > "$temp_cron"
+            crontab "$temp_cron" 2>/dev/null
+            rm -f "$temp_cron"
+            print_status "$GREEN" "✓ Cron job removed"
+        fi
+    fi
+    
+    # Remove storage files
+    if [[ "$script_type" == "all" || "$script_type" == "storage" ]]; then
+        [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]] && rm -f "$INSTALL_DIR/storage-analyzer.sh" && removed_files+=("storage-analyzer.sh")
+        [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]] && rm -f "$INSTALL_DIR/storage-cleanup.sh" && removed_files+=("storage-cleanup.sh")
+        [[ -f "$INSTALL_DIR/storage-analyzer" ]] && rm -f "$INSTALL_DIR/storage-analyzer"
+        [[ -f "$INSTALL_DIR/storage-cleanup" ]] && rm -f "$INSTALL_DIR/storage-cleanup"
+    fi
+    
+    # Reload systemd
+    systemctl daemon-reload
+    
+    if [[ ${#removed_files[@]} -gt 0 ]]; then
+        print_status "$GREEN" "Uninstallation complete!"
+        echo "Removed files:"
+        for file in "${removed_files[@]}"; do
+            echo "  ✓ $file"
+        done
+    else
+        print_status "$YELLOW" "No files found to remove for $script_type tools"
+    fi
+    
+    echo ""
+    print_status "$YELLOW" "Log files remain at:"
+    [[ -f "$LOG_DIR/network-fix.log" ]] && echo "  - $LOG_DIR/network-fix.log"
+    [[ -f "$LOG_DIR/network-monitor.log" ]] && echo "  - $LOG_DIR/network-monitor.log"
+    [[ -f "$LOG_DIR/storage-analyzer.log" ]] && echo "  - $LOG_DIR/storage-analyzer.log"
+    [[ -f "$LOG_DIR/storage-cleanup.log" ]] && echo "  - $LOG_DIR/storage-cleanup.log"
+}
+
+# Function to select uninstall type
+select_uninstall_type() {
+    print_status "$BLUE" "=== Selective Uninstall ==="
+    echo ""
+    print_status "$YELLOW" "What would you like to uninstall?"
+    echo "1. All tools (network + storage)"
+    echo "2. Network tools only"
+    echo "3. Storage tools only"
+    echo "4. Back to main menu"
+    echo ""
+    echo -n "Enter your choice (1-4): "
+    read -r choice
+    
+    case "$choice" in
+        1)
+            echo ""
+            uninstall_tools "all"
+            ;;
+        2)
+            echo ""
+            uninstall_tools "network"
+            ;;
+        3)
+            echo ""
+            uninstall_tools "storage"
+            ;;
+        4)
+            interactive_mode
+            ;;
+        *)
+            print_status "$RED" "Invalid choice. Please run the script again."
+            exit 1
+            ;;
+    esac
+}
+
+# Function for manual update checking
+manual_update_check() {
+    print_status "$BLUE" "=== Manual Update Check ==="
+    echo ""
+    
+    # Check what's currently installed
+    local installed_network=false
+    local installed_storage=false
+    
+    [[ -f "$INSTALL_DIR/fix-network.sh" ]] && installed_network=true
+    [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]] && installed_storage=true
+    
+    if [[ "$installed_network" == false && "$installed_storage" == false ]]; then
+        print_status "$YELLOW" "No Proxmox tools are currently installed."
+        echo "Would you like to install some tools instead?"
+        echo "1. Yes, go to installation menu"
+        echo "2. No, check for updates in current directory"
+        echo "3. Back to main menu"
+        echo ""
+        echo -n "Enter your choice (1-3): "
+        read -r choice
+        
+        case "$choice" in
+            1)
+                interactive_mode
+                ;;
+            2)
+                print_status "$YELLOW" "Checking for updates in current directory..."
+                ;;
+            3)
+                interactive_mode
+                ;;
+            *)
+                print_status "$RED" "Invalid choice"
+                interactive_mode
+                ;;
+        esac
+    else
+        print_status "$YELLOW" "Currently installed tools:"
+        [[ "$installed_network" == true ]] && echo "  ✓ Network tools"
+        [[ "$installed_storage" == true ]] && echo "  ✓ Storage tools"
+        echo ""
+    fi
+    
+    # Determine what to check based on what's installed
+    local check_type="all"
+    if [[ "$installed_network" == true && "$installed_storage" == false ]]; then
+        check_type="network"
+    elif [[ "$installed_network" == false && "$installed_storage" == true ]]; then
+        check_type="storage"
+    fi
+    
+    print_status "$YELLOW" "What would you like to check for updates?"
+    echo "1. All available scripts (including installer)"
+    echo "2. Network scripts only (including installer)"
+    echo "3. Storage scripts only (including installer)"
+    echo "4. Back to main menu"
+    echo ""
+    echo -n "Enter your choice (1-4): "
+    read -r choice
+    
+    case "$choice" in
+        1)
+            check_type="all"
+            ;;
+        2)
+            check_type="network"
+            ;;
+        3)
+            check_type="storage"
+            ;;
+        4)
+            interactive_mode
+            ;;
+        *)
+            print_status "$RED" "Invalid choice"
+            interactive_mode
+            ;;
+    esac
+    
+    echo ""
+    print_status "$BLUE" "Checking for updates for $check_type scripts..."
+    
+    # Run update check
+    if check_for_updates "$check_type" "true"; then
+        print_status "$GREEN" "All checked scripts are up to date!"
+    else
+        print_status "$YELLOW" "Updates were available and download process was triggered."
+    fi
+    
+    echo ""
+    echo "Press Enter to return to main menu..."
+    read -r
+    interactive_mode
+}
+
+# Function to auto-check for updates (silent, quick check)
+auto_check_updates() {
+    # Check what's currently installed
+    local installed_network=false
+    local installed_storage=false
+    
+    [[ -f "$INSTALL_DIR/fix-network.sh" ]] && installed_network=true
+    [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]] && installed_storage=true
+    
+    # If nothing is installed, skip auto-check
+    if [[ "$installed_network" == false && "$installed_storage" == false ]]; then
+        return
+    fi
+    
+    # Determine what to check based on what's installed
+    local check_type="all"
+    if [[ "$installed_network" == true && "$installed_storage" == false ]]; then
+        check_type="network"
+    elif [[ "$installed_network" == false && "$installed_storage" == true ]]; then
+        check_type="storage"
+    fi
+    
+    # Define files to check
+    local network_files=("fix-network.sh" "network-monitor.sh" "network-fix.service")
+    local storage_files=("storage-analyzer.sh" "storage-cleanup.sh")
+    local installer_files=("install.sh")
+    local files=()
+    
+    case "$check_type" in
+        "network")
+            files=("${network_files[@]}" "${installer_files[@]}")
+            ;;
+        "storage")
+            files=("${storage_files[@]}" "${installer_files[@]}")
+            ;;
+        "all"|*)
+            files=("${network_files[@]}" "${storage_files[@]}" "${installer_files[@]}")
+            ;;
+    esac
+    
+    # Check for existing installed files (not current directory files)
+    local existing_files=()
+    for file in "${files[@]}"; do
+        local installed_file=""
+        case "$file" in
+            "fix-network.sh")
+                installed_file="$INSTALL_DIR/fix-network.sh"
+                ;;
+            "network-monitor.sh")
+                installed_file="$INSTALL_DIR/network-monitor.sh"
+                ;;
+            "storage-analyzer.sh")
+                installed_file="$INSTALL_DIR/storage-analyzer.sh"
+                ;;
+            "storage-cleanup.sh")
+                installed_file="$INSTALL_DIR/storage-cleanup.sh"
+                ;;
+            "install.sh")
+                # For install.sh, check if we're running the installed version
+                if [[ "$0" == "$INSTALL_DIR/install.sh" ]]; then
+                    installed_file="$INSTALL_DIR/install.sh"
+                elif [[ -f "$file" ]]; then
+                    # Check current directory version
+                    installed_file="$file"
+                fi
+                ;;
+            *)
+                # For other files like network-fix.service, check current directory
+                if [[ -f "$file" ]]; then
+                    installed_file="$file"
+                fi
+                ;;
+        esac
+        
+        if [[ -n "$installed_file" && -f "$installed_file" ]]; then
+            existing_files+=("$installed_file")
         fi
     done
     
-    echo -e "${RED}Failed to restore network connectivity after $MAX_RETRIES attempts${NC}"
-    log_message "ERROR" "Failed to restore network connectivity after $MAX_RETRIES attempts"
+    # If no existing files, skip
+    if [[ ${#existing_files[@]} -eq 0 ]]; then
+        return
+    fi
     
-    echo -e "${YELLOW}Manual intervention may be required. Check:${NC}"
-    echo "1. Physical cable connections"
-    echo "2. Switch/router status"
-    echo "3. Network configuration files"
-    echo "4. Check logs: tail -f $LOG_FILE"
-    echo "5. For Proxmox bridge issues, try:"
-    echo "   - Check /etc/network/interfaces configuration"
-    echo "   - Verify bridge members: ls /sys/class/net/$interface/brif/"
-    echo "   - Check physical cable connections"
-    echo "   - Restart with specific interface: $0 <physical_interface>"
-    echo "   - Check ethtool workaround service: systemctl status ethtool-workaround-eno2.service"
+    # Quick check for updates (silent)
+    local updated_files=()
+    local check_failed=()
     
-    exit 1
+    for installed_file in "${existing_files[@]}"; do
+        # Get the base filename for URL
+        local base_file=$(basename "$installed_file")
+        local url="$REPO_URL/$base_file"
+        local temp_file="${base_file}.tmp"
+        
+        # Download to temp file silently
+        local http_code=$(curl -s -L -w "%{http_code}" -o "$temp_file" "$url" 2>/dev/null)
+        
+        if [[ "$http_code" == "200" && -f "$temp_file" && -s "$temp_file" ]]; then
+            # Check if file contains actual content (not 404 page)
+            if ! grep -q "404: Not Found" "$temp_file" 2>/dev/null; then
+                # Compare files
+                if ! diff -q "$installed_file" "$temp_file" >/dev/null 2>&1; then
+                    updated_files+=("$base_file")
+                fi
+            fi
+        fi
+        rm -f "$temp_file"
+    done
+    
+    # Display update status
+    if [[ ${#updated_files[@]} -gt 0 ]]; then
+        echo ""
+        print_status "$YELLOW" "⚠ Updates available for: ${updated_files[*]}"
+        echo "   Use option 5 to check and download updates"
+    else
+        echo ""
+        print_status "$GREEN" "✓ All installed scripts are up to date"
+    fi
 }
 
-# Run main function
-main "$@"
+# Handle command line arguments
+case "${1:-interactive}" in
+    "install"|"1")
+        main "all"
+        ;;
+    "install-network")
+        main "network"
+        ;;
+    "install-storage")
+        main "storage"
+        ;;
+    "download"|"2")
+        select_download_type
+        ;;
+    "uninstall"|"3")
+        check_root
+        uninstall_tools "interactive"
+        ;;
+    "test"|"4")
+        check_root
+        test_installation
+        ;;
+    "check-updates"|"update-check")
+        manual_update_check
+        ;;
+    "interactive"|"")
+        interactive_mode
+        ;;
+    "help"|"-h"|"--help")
+        echo "Usage: $0 [command]"
+        echo ""
+        echo "Commands:"
+        echo "  (no args)        - Interactive mode with menu options"
+        echo "  install          - Download and install all Proxmox tools"
+        echo "  install-network  - Download and install network tools only"
+        echo "  install-storage  - Download and install storage tools only"
+        echo "  download         - Download scripts from repository only"
+        echo "  uninstall        - Remove all Proxmox tools"
+        echo "  test             - Test installation"
+        echo "  check-updates    - Check for script updates"
+        echo "  help             - Show this help message"
+        echo ""
+        echo "Interactive Options:"
+        echo "  1. Download and install all Proxmox tools (network + storage)"
+        echo "  2. Download and install network tools only"
+        echo "  3. Download and install storage tools only"
+        echo "  4. Download scripts only (no installation)"
+        echo "  5. Check for script updates"
+        echo "  6. Uninstall Proxmox tools"
+        echo "  7. Test current installation"
+        echo "  8. Exit"
+        echo ""
+        echo "Repository: https://github.com/TrueBankai416/Scripts"
+        echo "Script location: $REPO_URL"
+        ;;
+    *)
+        print_status "$RED" "Unknown command: $1"
+        echo "Use '$0 help' for usage information"
+        exit 1
+        ;;
+esac
