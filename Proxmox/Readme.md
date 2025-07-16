@@ -6,6 +6,7 @@ This repository contains scripts to automatically fix common Proxmox issues incl
 
 1. **Network Connectivity**: Proxmox occasionally loses internet connectivity, requiring manual intervention to unplug and plug back in the ethernet cable
 2. **Storage Management**: Proxmox storage can fill up quickly with VM backups, logs, and other data, requiring analysis and cleanup
+3. **Storage Configuration**: Proxmox storage display inconsistencies where summary page shows wrong capacity compared to actual disk size
 
 ## Files
 
@@ -17,6 +18,7 @@ This repository contains scripts to automatically fix common Proxmox issues incl
 ### Storage Management
 - `storage-analyzer.sh` - Comprehensive storage analysis and reporting
 - `storage-cleanup.sh` - Safe cleanup of common space consumers
+- `storage-config-fix.sh` - Diagnose and fix storage configuration issues
 
 ## Quick Start
 
@@ -40,6 +42,7 @@ This repository contains scripts to automatically fix common Proxmox issues incl
    wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/fix-network.sh
    wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/storage-analyzer.sh
    wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/storage-cleanup.sh
+   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/storage-config-fix.sh
    
    # Make scripts executable
    chmod +x *.sh
@@ -48,6 +51,7 @@ This repository contains scripts to automatically fix common Proxmox issues incl
    sudo mv fix-network.sh /usr/local/bin/fix-network
    sudo mv storage-analyzer.sh /usr/local/bin/storage-analyzer
    sudo mv storage-cleanup.sh /usr/local/bin/storage-cleanup
+   sudo mv storage-config-fix.sh /usr/local/bin/storage-config-fix
    ```
 
 3. **Usage:**
@@ -60,6 +64,7 @@ This repository contains scripts to automatically fix common Proxmox issues incl
    sudo storage-analyzer          # Analyze storage usage
    sudo storage-cleanup           # Interactive cleanup
    sudo storage-cleanup all       # Clean all categories
+   sudo storage-config-fix        # Fix storage configuration issues
    ```
 
 ## Features
@@ -160,9 +165,9 @@ You can modify these variables at the top of fix-network.sh:
 - `CONNECTIVITY_TIMEOUT`: Ping timeout in seconds (default: 5)
 
 ### Storage Scripts
-You can modify these variables at the top of storage-analyzer.sh and storage-cleanup.sh:
+You can modify these variables at the top of storage-analyzer.sh, storage-cleanup.sh, and storage-config-fix.sh:
 
-- `LOG_FILE`: Location of log file (default: `/var/log/storage-analyzer.log` or `/var/log/storage-cleanup.log`)
+- `LOG_FILE`: Location of log file (default: `/var/log/storage-analyzer.log`, `/var/log/storage-cleanup.log`, or `/var/log/storage-config-fix.log`)
 - `REPORT_FILE`: Location of analysis report (default: `/tmp/storage-report.txt`)
 - `BACKUP_DIR`: Directory for cleanup backups (default: `/var/backups/storage-cleanup`)
 
@@ -302,6 +307,9 @@ The storage scripts help resolve these common Proxmox storage problems:
 5. **Package cache buildup** - Cleans APT cache and orphaned packages
 6. **Temporary file accumulation** - Safely removes old temporary files
 7. **Duplicate files** - Finds and helps remove duplicate backups/files
+8. **Storage display inconsistencies** - Fixes cases where summary page shows wrong capacity
+9. **Unallocated disk space** - Expands physical volumes and logical volumes to use full disk capacity
+10. **Thin pool configuration** - Optimizes thin pool settings and utilization
 
 ## Best Practices
 
@@ -311,6 +319,8 @@ The storage scripts help resolve these common Proxmox storage problems:
 4. **Test in non-production** - Validate scripts in test environment
 5. **Monitor thin pools** - Watch data_percent and metadata_percent
 6. **Log rotation** - Ensure proper log rotation is configured
+7. **Storage configuration** - Verify storage capacity after hardware changes
+8. **Disk expansion** - Use storage-config-fix after adding disk space
 
 ## License
 
