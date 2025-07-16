@@ -7,7 +7,7 @@
 INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="/etc/systemd/system"
 LOG_DIR="/var/log"
-REPO_URL="https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox"
+REPO_URL="https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox"
 
 # Colors for output
 RED='\033[0;31m'
