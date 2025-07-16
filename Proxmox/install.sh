@@ -779,6 +779,10 @@ main() {
 # Function for interactive mode
 interactive_mode() {
     print_status "$BLUE" "=== Proxmox Automation Tools Setup ==="
+    
+    # Auto-check for updates when script starts
+    auto_check_updates
+    
     echo ""
     print_status "$YELLOW" "What would you like to do?"
     echo "1. Download and install all Proxmox tools (network + storage)"
@@ -1091,6 +1095,92 @@ manual_update_check() {
     echo "Press Enter to return to main menu..."
     read -r
     interactive_mode
+}
+
+# Function to auto-check for updates (silent, quick check)
+auto_check_updates() {
+    # Check what's currently installed
+    local installed_network=false
+    local installed_storage=false
+    
+    [[ -f "$INSTALL_DIR/fix-network.sh" ]] && installed_network=true
+    [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]] && installed_storage=true
+    
+    # If nothing is installed, skip auto-check
+    if [[ "$installed_network" == false && "$installed_storage" == false ]]; then
+        return
+    fi
+    
+    # Determine what to check based on what's installed
+    local check_type="all"
+    if [[ "$installed_network" == true && "$installed_storage" == false ]]; then
+        check_type="network"
+    elif [[ "$installed_network" == false && "$installed_storage" == true ]]; then
+        check_type="storage"
+    fi
+    
+    # Define files to check
+    local network_files=("fix-network.sh" "network-monitor.sh" "network-fix.service")
+    local storage_files=("storage-analyzer.sh" "storage-cleanup.sh")
+    local files=()
+    
+    case "$check_type" in
+        "network")
+            files=("${network_files[@]}")
+            ;;
+        "storage")
+            files=("${storage_files[@]}")
+            ;;
+        "all"|*)
+            files=("${network_files[@]}" "${storage_files[@]}")
+            ;;
+    esac
+    
+    # Check for existing files
+    local existing_files=()
+    for file in "${files[@]}"; do
+        if [[ -f "$file" ]]; then
+            existing_files+=("$file")
+        fi
+    done
+    
+    # If no existing files, skip
+    if [[ ${#existing_files[@]} -eq 0 ]]; then
+        return
+    fi
+    
+    # Quick check for updates (silent)
+    local updated_files=()
+    local check_failed=()
+    
+    for file in "${existing_files[@]}"; do
+        local url="$REPO_URL/$file"
+        local temp_file="${file}.tmp"
+        
+        # Download to temp file silently
+        local http_code=$(curl -s -L -w "%{http_code}" -o "$temp_file" "$url" 2>/dev/null)
+        
+        if [[ "$http_code" == "200" && -f "$temp_file" && -s "$temp_file" ]]; then
+            # Check if file contains actual content (not 404 page)
+            if ! grep -q "404: Not Found" "$temp_file" 2>/dev/null; then
+                # Compare files
+                if ! diff -q "$file" "$temp_file" >/dev/null 2>&1; then
+                    updated_files+=("$file")
+                fi
+            fi
+        fi
+        rm -f "$temp_file"
+    done
+    
+    # Display update status
+    if [[ ${#updated_files[@]} -gt 0 ]]; then
+        echo ""
+        print_status "$YELLOW" "⚠ Updates available for: ${updated_files[*]}"
+        echo "   Use option 5 to check and download updates"
+    else
+        echo ""
+        print_status "$GREEN" "✓ All installed scripts are up to date"
+    fi
 }
 
 # Handle command line arguments
