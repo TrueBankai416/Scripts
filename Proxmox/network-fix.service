@@ -1,0 +1,27 @@
+[Unit]
+Description=Network Connectivity Monitor for Proxmox
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/network-monitor.sh monitor
+Restart=always
+RestartSec=30
+User=root
+Group=root
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=network-monitor
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log
+ReadWritePaths=/usr/local/bin
+
+[Install]
+WantedBy=multi-user.target
