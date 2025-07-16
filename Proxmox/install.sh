@@ -1177,81 +1177,78 @@ auto_check_updates() {
         return
     fi
     
-    # Determine what to check based on what's installed
-    local check_type="all"
-    if [[ "$installed_network" == true && "$installed_storage" == false ]]; then
-        check_type="network"
-    elif [[ "$installed_network" == false && "$installed_storage" == true ]]; then
-        check_type="storage"
-    fi
-    
-    # Define files to check
+    # Define all available scripts
     local network_files=("fix-network.sh" "network-monitor.sh" "network-fix.service")
-    local storage_files=("storage-analyzer.sh" "storage-cleanup.sh")
+    local storage_files=("storage-analyzer.sh" "storage-cleanup.sh" "storage-config-fix.sh")
     local installer_files=("install.sh")
-    local files=()
     
-    case "$check_type" in
-        "network")
-            files=("${network_files[@]}" "${installer_files[@]}")
-            ;;
-        "storage")
-            files=("${storage_files[@]}" "${installer_files[@]}")
-            ;;
-        "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}" "${installer_files[@]}")
-            ;;
-    esac
+    # Check what's installed and what's available
+    local installed_files=()
+    local missing_files=()
+    local updated_files=()
     
-    # Check for existing installed files (not current directory files)
-    local existing_files=()
-    for file in "${files[@]}"; do
-        local installed_file=""
-        case "$file" in
-            "fix-network.sh")
-                installed_file="$INSTALL_DIR/fix-network.sh"
-                ;;
-            "network-monitor.sh")
-                installed_file="$INSTALL_DIR/network-monitor.sh"
-                ;;
-            "storage-analyzer.sh")
-                installed_file="$INSTALL_DIR/storage-analyzer.sh"
-                ;;
-            "storage-cleanup.sh")
-                installed_file="$INSTALL_DIR/storage-cleanup.sh"
-                ;;
-            "install.sh")
-                # For install.sh, check if we're running the installed version
-                if [[ "$0" == "$INSTALL_DIR/install.sh" ]]; then
-                    installed_file="$INSTALL_DIR/install.sh"
-                elif [[ -f "$file" ]]; then
-                    # Check current directory version
-                    installed_file="$file"
-                fi
-                ;;
-            *)
-                # For other files like network-fix.service, check current directory
-                if [[ -f "$file" ]]; then
-                    installed_file="$file"
-                fi
-                ;;
-        esac
-        
-        if [[ -n "$installed_file" && -f "$installed_file" ]]; then
-            existing_files+=("$installed_file")
-        fi
-    done
-    
-    # If no existing files, skip
-    if [[ ${#existing_files[@]} -eq 0 ]]; then
-        return
+    # Check network files
+    if [[ "$installed_network" == true ]]; then
+        for file in "${network_files[@]}"; do
+            local installed_file=""
+            case "$file" in
+                "fix-network.sh")
+                    installed_file="$INSTALL_DIR/fix-network.sh"
+                    ;;
+                "network-monitor.sh")
+                    installed_file="$INSTALL_DIR/network-monitor.sh"
+                    ;;
+                "network-fix.service")
+                    # Service file is in current directory or service dir
+                    if [[ -f "$file" ]]; then
+                        installed_file="$file"
+                    elif [[ -f "$SERVICE_DIR/network-fix.service" ]]; then
+                        installed_file="$SERVICE_DIR/network-fix.service"
+                    fi
+                    ;;
+            esac
+            
+            if [[ -n "$installed_file" && -f "$installed_file" ]]; then
+                installed_files+=("$installed_file")
+            else
+                missing_files+=("$file")
+            fi
+        done
     fi
     
-    # Quick check for updates (silent)
-    local updated_files=()
-    local check_failed=()
+    # Check storage files
+    if [[ "$installed_storage" == true ]]; then
+        for file in "${storage_files[@]}"; do
+            local installed_file=""
+            case "$file" in
+                "storage-analyzer.sh")
+                    installed_file="$INSTALL_DIR/storage-analyzer.sh"
+                    ;;
+                "storage-cleanup.sh")
+                    installed_file="$INSTALL_DIR/storage-cleanup.sh"
+                    ;;
+                "storage-config-fix.sh")
+                    installed_file="$INSTALL_DIR/storage-config-fix.sh"
+                    ;;
+            esac
+            
+            if [[ -n "$installed_file" && -f "$installed_file" ]]; then
+                installed_files+=("$installed_file")
+            else
+                missing_files+=("$file")
+            fi
+        done
+    fi
     
-    for installed_file in "${existing_files[@]}"; do
+    # Check installer
+    if [[ "$0" == "$INSTALL_DIR/install.sh" ]]; then
+        installed_files+=("$INSTALL_DIR/install.sh")
+    elif [[ -f "install.sh" ]]; then
+        installed_files+=("install.sh")
+    fi
+    
+    # Quick check for updates to existing files (silent)
+    for installed_file in "${installed_files[@]}"; do
         # Get the base filename for URL
         local base_file=$(basename "$installed_file")
         local url="$REPO_URL/$base_file"
@@ -1272,13 +1269,19 @@ auto_check_updates() {
         rm -f "$temp_file"
     done
     
-    # Display update status
-    if [[ ${#updated_files[@]} -gt 0 ]]; then
-        echo ""
+    # Display status
+    echo ""
+    if [[ ${#updated_files[@]} -gt 0 && ${#missing_files[@]} -gt 0 ]]; then
+        print_status "$YELLOW" "⚠ Updates available for: ${updated_files[*]}"
+        print_status "$YELLOW" "⚠ New scripts available: ${missing_files[*]}"
+        echo "   Use option 5 to check and download updates"
+    elif [[ ${#updated_files[@]} -gt 0 ]]; then
         print_status "$YELLOW" "⚠ Updates available for: ${updated_files[*]}"
         echo "   Use option 5 to check and download updates"
+    elif [[ ${#missing_files[@]} -gt 0 ]]; then
+        print_status "$YELLOW" "⚠ New scripts available: ${missing_files[*]}"
+        echo "   Use option 5 to check and download new scripts"
     else
-        echo ""
         print_status "$GREEN" "✓ All installed scripts are up to date"
     fi
 }
