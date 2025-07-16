@@ -25,7 +25,7 @@ This repository contains scripts to automatically fix common Proxmox issues incl
 1. **Interactive install (Recommended):**
    ```bash
    # Download and run the interactive installation script
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/install.sh
+   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/install.sh
    chmod +x install.sh
    sudo ./install.sh
    ```
@@ -39,10 +39,10 @@ This repository contains scripts to automatically fix common Proxmox issues incl
 2. **Manual setup (Alternative):**
    ```bash
    # Download individual scripts
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/fix-network.sh
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/storage-analyzer.sh
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/storage-cleanup.sh
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/main/Proxmox/storage-config-fix.sh
+   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/fix-network.sh
+   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/storage-analyzer.sh
+   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/storage-cleanup.sh
+   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/storage-config-fix.sh
    
    # Make scripts executable
    chmod +x *.sh
