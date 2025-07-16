@@ -131,10 +131,11 @@ check_for_updates() {
     local check_failed=()
     
     for file in "${existing_files[@]}"; do
-        local url="$REPO_URL/$file"
-        local temp_file="${file}.tmp"
+        local base_file=$(basename "$file")
+        local url="$REPO_URL/$base_file"
+        local temp_file="${base_file}.tmp"
         
-        print_status "$YELLOW" "Checking $file for updates..."
+        print_status "$YELLOW" "Checking $base_file for updates..."
         
         # Download to temp file
         local http_code=$(curl -L -w "%{http_code}" -o "$temp_file" "$url" 2>/dev/null)
@@ -142,23 +143,23 @@ check_for_updates() {
         if [[ "$http_code" == "200" && -f "$temp_file" && -s "$temp_file" ]]; then
             # Check if file contains actual content (not 404 page)
             if grep -q "404: Not Found" "$temp_file" 2>/dev/null; then
-                print_status "$YELLOW" "  ⚠ $file not available in repository"
+                print_status "$YELLOW" "  ⚠ $base_file not available in repository"
                 rm -f "$temp_file"
-                check_failed+=("$file")
+                check_failed+=("$base_file")
             else
                 # Compare files
                 if ! diff -q "$file" "$temp_file" >/dev/null 2>&1; then
-                    print_status "$GREEN" "  ✓ Update available for $file"
-                    updated_files+=("$file")
+                    print_status "$GREEN" "  ✓ Update available for $base_file"
+                    updated_files+=("$base_file")
                 else
-                    print_status "$GREEN" "  ✓ $file is up to date"
+                    print_status "$GREEN" "  ✓ $base_file is up to date"
                 fi
                 rm -f "$temp_file"
             fi
         else
-            print_status "$YELLOW" "  ⚠ Failed to check $file (HTTP: $http_code)"
+            print_status "$YELLOW" "  ⚠ Failed to check $base_file (HTTP: $http_code)"
             rm -f "$temp_file"
-            check_failed+=("$file")
+            check_failed+=("$base_file")
         fi
     done
     
@@ -274,7 +275,11 @@ download_scripts() {
         local http_code
         if [[ -n "$file_size" && "$file_size" -gt 0 ]]; then
             # Show progress bar for larger files
-            http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" --progress-bar 2>/dev/null)
+            http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" --progress-bar 2>&1 | grep -o '[0-9]*$' | tail -1)
+            # If grep didn't capture the http code, try again without progress bar
+            if [[ -z "$http_code" ]]; then
+                http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" --progress-bar 2>/dev/null)
+            fi
         else
             # Standard download for smaller files or when size unknown
             http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" 2>/dev/null)
@@ -1154,7 +1159,15 @@ manual_update_check() {
     if check_for_updates "$check_type" "true"; then
         print_status "$GREEN" "All checked scripts are up to date!"
     else
-        print_status "$YELLOW" "Updates were available and download process was triggered."
+        print_status "$YELLOW" "Updates or new scripts were available, downloading now..."
+        echo ""
+        
+        # Actually download the scripts
+        if download_scripts "$check_type"; then
+            print_status "$GREEN" "Download completed successfully!"
+        else
+            print_status "$RED" "Download failed!"
+        fi
     fi
     
     echo ""
