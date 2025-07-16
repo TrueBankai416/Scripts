@@ -50,16 +50,20 @@ check_for_updates() {
         "storage-cleanup.sh"
     )
     
+    local installer_files=(
+        "install.sh"
+    )
+    
     local files=()
     case "$script_type" in
         "network")
-            files=("${network_files[@]}")
+            files=("${network_files[@]}" "${installer_files[@]}")
             ;;
         "storage")
-            files=("${storage_files[@]}")
+            files=("${storage_files[@]}" "${installer_files[@]}")
             ;;
         "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}")
+            files=("${network_files[@]}" "${storage_files[@]}" "${installer_files[@]}")
             ;;
     esac
     
@@ -253,13 +257,26 @@ download_scripts() {
     local download_success=true
     local downloaded_files=()
     local failed_files=()
+    local total_files=${#files[@]}
+    local current_file=0
     
     for file in "${files[@]}"; do
+        ((current_file++))
         local url="$REPO_URL/$file"
-        print_status "$YELLOW" "Downloading $file..."
+        print_status "$YELLOW" "[$current_file/$total_files] Downloading $file..."
         
-        # Try to download with better error handling
-        local http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" 2>/dev/null)
+        # Get file size for progress if possible
+        local file_size=$(curl -sI "$url" 2>/dev/null | grep -i content-length | cut -d' ' -f2 | tr -d '\r')
+        
+        # Try to download with progress bar
+        local http_code
+        if [[ -n "$file_size" && "$file_size" -gt 0 ]]; then
+            # Show progress bar for larger files
+            http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" --progress-bar 2>/dev/null)
+        else
+            # Standard download for smaller files or when size unknown
+            http_code=$(curl -L -w "%{http_code}" -o "$file" "$url" 2>/dev/null)
+        fi
         
         if [[ "$http_code" == "200" && -f "$file" && -s "$file" ]]; then
             # Check if file contains actual content (not 404 page)
@@ -269,7 +286,8 @@ download_scripts() {
                 failed_files+=("$file")
                 download_success=false
             else
-                print_status "$GREEN" "✓ Downloaded $file successfully"
+                local final_size=$(stat -c%s "$file" 2>/dev/null || echo "unknown")
+                print_status "$GREEN" "✓ Downloaded $file successfully ($final_size bytes)"
                 downloaded_files+=("$file")
             fi
         else
@@ -283,13 +301,22 @@ download_scripts() {
     echo ""
     if [[ "$download_success" == true ]]; then
         print_status "$GREEN" "All files downloaded successfully!"
-        echo "Downloaded files: ${downloaded_files[*]}"
+        echo ""
+        print_status "$BLUE" "Download Summary:"
+        echo "  ✓ Total files: $total_files"
+        echo "  ✓ Successfully downloaded: ${#downloaded_files[@]}"
+        echo "  ✓ Files: ${downloaded_files[*]}"
         return 0
     else
         print_status "$RED" "Failed to download some files:"
         for file in "${failed_files[@]}"; do
             echo "  ✗ $file"
         done
+        echo ""
+        print_status "$BLUE" "Download Summary:"
+        echo "  ✓ Total files: $total_files"
+        echo "  ✓ Successfully downloaded: ${#downloaded_files[@]}"
+        echo "  ✗ Failed downloads: ${#failed_files[@]}"
         echo ""
         print_status "$YELLOW" "Possible causes:"
         echo "  - Files not yet merged to main branch"
@@ -1054,9 +1081,9 @@ manual_update_check() {
     fi
     
     print_status "$YELLOW" "What would you like to check for updates?"
-    echo "1. All available scripts"
-    echo "2. Network scripts only"
-    echo "3. Storage scripts only"
+    echo "1. All available scripts (including installer)"
+    echo "2. Network scripts only (including installer)"
+    echo "3. Storage scripts only (including installer)"
     echo "4. Back to main menu"
     echo ""
     echo -n "Enter your choice (1-4): "
@@ -1122,17 +1149,18 @@ auto_check_updates() {
     # Define files to check
     local network_files=("fix-network.sh" "network-monitor.sh" "network-fix.service")
     local storage_files=("storage-analyzer.sh" "storage-cleanup.sh")
+    local installer_files=("install.sh")
     local files=()
     
     case "$check_type" in
         "network")
-            files=("${network_files[@]}")
+            files=("${network_files[@]}" "${installer_files[@]}")
             ;;
         "storage")
-            files=("${storage_files[@]}")
+            files=("${storage_files[@]}" "${installer_files[@]}")
             ;;
         "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}")
+            files=("${network_files[@]}" "${storage_files[@]}" "${installer_files[@]}")
             ;;
     esac
     
