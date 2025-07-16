@@ -48,6 +48,7 @@ check_for_updates() {
     local storage_files=(
         "storage-analyzer.sh"
         "storage-cleanup.sh"
+        "storage-config-fix.sh"
     )
     
     local installer_files=(
@@ -236,6 +237,7 @@ download_scripts() {
     local storage_files=(
         "storage-analyzer.sh"
         "storage-cleanup.sh"
+        "storage-config-fix.sh"
     )
     
     local files=()
@@ -372,6 +374,13 @@ install_scripts() {
             ln -sf "$INSTALL_DIR/storage-cleanup.sh" "$INSTALL_DIR/storage-cleanup"
             ((installed_count++))
         fi
+        
+        if [[ -f "storage-config-fix.sh" ]]; then
+            cp storage-config-fix.sh "$INSTALL_DIR/storage-config-fix.sh"
+            chmod +x "$INSTALL_DIR/storage-config-fix.sh"
+            ln -sf "$INSTALL_DIR/storage-config-fix.sh" "$INSTALL_DIR/storage-config-fix"
+            ((installed_count++))
+        fi
     fi
     
     if [[ $installed_count -eq 0 ]]; then
@@ -387,6 +396,7 @@ install_scripts() {
     [[ -f "$INSTALL_DIR/network-monitor.sh" ]] && echo "    ✓ network-monitor.sh -> $INSTALL_DIR/network-monitor.sh"
     [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]] && echo "    ✓ storage-analyzer.sh -> $INSTALL_DIR/storage-analyzer.sh"
     [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]] && echo "    ✓ storage-cleanup.sh -> $INSTALL_DIR/storage-cleanup.sh"
+    [[ -f "$INSTALL_DIR/storage-config-fix.sh" ]] && echo "    ✓ storage-config-fix.sh -> $INSTALL_DIR/storage-config-fix.sh"
     echo "  Symlinks created for all installed scripts"
 }
 
@@ -443,6 +453,12 @@ setup_logging() {
             touch "$LOG_DIR/storage-cleanup.log"
             chmod 644 "$LOG_DIR/storage-cleanup.log"
             log_files_created+=("$LOG_DIR/storage-cleanup.log")
+        fi
+        
+        if [[ -f "$INSTALL_DIR/storage-config-fix.sh" ]]; then
+            touch "$LOG_DIR/storage-config-fix.log"
+            chmod 644 "$LOG_DIR/storage-config-fix.log"
+            log_files_created+=("$LOG_DIR/storage-config-fix.log")
         fi
     fi
     
@@ -594,6 +610,7 @@ show_usage_options() {
             echo "  sudo storage-analyzer       # Analyze storage usage"
             echo "  sudo storage-cleanup        # Interactive cleanup"
             echo "  sudo storage-cleanup all    # Auto cleanup all categories"
+            echo "  sudo storage-config-fix     # Fix storage configuration issues"
             echo ""
         fi
     fi
@@ -603,6 +620,7 @@ show_usage_options() {
     [[ -f "$LOG_DIR/network-monitor.log" ]] && echo "  sudo tail -f /var/log/network-monitor.log"
     [[ -f "$LOG_DIR/storage-analyzer.log" ]] && echo "  sudo tail -f /var/log/storage-analyzer.log"
     [[ -f "$LOG_DIR/storage-cleanup.log" ]] && echo "  sudo tail -f /var/log/storage-cleanup.log"
+    [[ -f "$LOG_DIR/storage-config-fix.log" ]] && echo "  sudo tail -f /var/log/storage-config-fix.log"
     echo ""
     print_status "$GREEN" "For more information, see README.md"
 }
@@ -683,6 +701,14 @@ test_installation() {
             print_status "$YELLOW" "⚠ storage-cleanup.sh is not executable (may not be installed)"
         fi
         
+        ((tests_total++))
+        if [[ -x "$INSTALL_DIR/storage-config-fix.sh" ]]; then
+            print_status "$GREEN" "✓ storage-config-fix.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ storage-config-fix.sh is not executable (may not be installed)"
+        fi
+        
         # Test help commands for storage scripts
         if [[ -x "$INSTALL_DIR/storage-analyzer.sh" ]]; then
             ((tests_total++))
@@ -701,6 +727,16 @@ test_installation() {
                 ((tests_passed++))
             else
                 print_status "$RED" "✗ storage-cleanup help failed"
+            fi
+        fi
+        
+        if [[ -x "$INSTALL_DIR/storage-config-fix.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/storage-config-fix.sh" --help &>/dev/null; then
+                print_status "$GREEN" "✓ storage-config-fix help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ storage-config-fix help failed"
             fi
         fi
     fi
@@ -969,6 +1005,8 @@ uninstall_tools() {
         [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]] && rm -f "$INSTALL_DIR/storage-cleanup.sh" && removed_files+=("storage-cleanup.sh")
         [[ -f "$INSTALL_DIR/storage-analyzer" ]] && rm -f "$INSTALL_DIR/storage-analyzer"
         [[ -f "$INSTALL_DIR/storage-cleanup" ]] && rm -f "$INSTALL_DIR/storage-cleanup"
+        [[ -f "$INSTALL_DIR/storage-config-fix.sh" ]] && rm -f "$INSTALL_DIR/storage-config-fix.sh" && removed_files+=("storage-config-fix.sh")
+        [[ -f "$INSTALL_DIR/storage-config-fix" ]] && rm -f "$INSTALL_DIR/storage-config-fix"
     fi
     
     # Reload systemd
@@ -990,6 +1028,7 @@ uninstall_tools() {
     [[ -f "$LOG_DIR/network-monitor.log" ]] && echo "  - $LOG_DIR/network-monitor.log"
     [[ -f "$LOG_DIR/storage-analyzer.log" ]] && echo "  - $LOG_DIR/storage-analyzer.log"
     [[ -f "$LOG_DIR/storage-cleanup.log" ]] && echo "  - $LOG_DIR/storage-cleanup.log"
+    [[ -f "$LOG_DIR/storage-config-fix.log" ]] && echo "  - $LOG_DIR/storage-config-fix.log"
 }
 
 # Function to select uninstall type
@@ -1164,11 +1203,42 @@ auto_check_updates() {
             ;;
     esac
     
-    # Check for existing files
+    # Check for existing installed files (not current directory files)
     local existing_files=()
     for file in "${files[@]}"; do
-        if [[ -f "$file" ]]; then
-            existing_files+=("$file")
+        local installed_file=""
+        case "$file" in
+            "fix-network.sh")
+                installed_file="$INSTALL_DIR/fix-network.sh"
+                ;;
+            "network-monitor.sh")
+                installed_file="$INSTALL_DIR/network-monitor.sh"
+                ;;
+            "storage-analyzer.sh")
+                installed_file="$INSTALL_DIR/storage-analyzer.sh"
+                ;;
+            "storage-cleanup.sh")
+                installed_file="$INSTALL_DIR/storage-cleanup.sh"
+                ;;
+            "install.sh")
+                # For install.sh, check if we're running the installed version
+                if [[ "$0" == "$INSTALL_DIR/install.sh" ]]; then
+                    installed_file="$INSTALL_DIR/install.sh"
+                elif [[ -f "$file" ]]; then
+                    # Check current directory version
+                    installed_file="$file"
+                fi
+                ;;
+            *)
+                # For other files like network-fix.service, check current directory
+                if [[ -f "$file" ]]; then
+                    installed_file="$file"
+                fi
+                ;;
+        esac
+        
+        if [[ -n "$installed_file" && -f "$installed_file" ]]; then
+            existing_files+=("$installed_file")
         fi
     done
     
@@ -1181,9 +1251,11 @@ auto_check_updates() {
     local updated_files=()
     local check_failed=()
     
-    for file in "${existing_files[@]}"; do
-        local url="$REPO_URL/$file"
-        local temp_file="${file}.tmp"
+    for installed_file in "${existing_files[@]}"; do
+        # Get the base filename for URL
+        local base_file=$(basename "$installed_file")
+        local url="$REPO_URL/$base_file"
+        local temp_file="${base_file}.tmp"
         
         # Download to temp file silently
         local http_code=$(curl -s -L -w "%{http_code}" -o "$temp_file" "$url" 2>/dev/null)
@@ -1192,8 +1264,8 @@ auto_check_updates() {
             # Check if file contains actual content (not 404 page)
             if ! grep -q "404: Not Found" "$temp_file" 2>/dev/null; then
                 # Compare files
-                if ! diff -q "$file" "$temp_file" >/dev/null 2>&1; then
-                    updated_files+=("$file")
+                if ! diff -q "$installed_file" "$temp_file" >/dev/null 2>&1; then
+                    updated_files+=("$base_file")
                 fi
             fi
         fi
