@@ -699,10 +699,13 @@ test_installation() {
         fi
     fi
     
-    # Test storage scripts
+    # Test storage scripts - check current directory first, then installed location
     if [[ "$script_type" == "all" || "$script_type" == "storage" ]]; then
         ((tests_total++))
-        if [[ -x "$INSTALL_DIR/storage-analyzer.sh" ]]; then
+        if [[ -x "storage-analyzer.sh" ]]; then
+            print_status "$GREEN" "✓ storage-analyzer.sh is executable"
+            ((tests_passed++))
+        elif [[ -x "$INSTALL_DIR/storage-analyzer.sh" ]]; then
             print_status "$GREEN" "✓ storage-analyzer.sh is executable"
             ((tests_passed++))
         else
@@ -710,7 +713,10 @@ test_installation() {
         fi
         
         ((tests_total++))
-        if [[ -x "$INSTALL_DIR/storage-cleanup.sh" ]]; then
+        if [[ -x "storage-cleanup.sh" ]]; then
+            print_status "$GREEN" "✓ storage-cleanup.sh is executable"
+            ((tests_passed++))
+        elif [[ -x "$INSTALL_DIR/storage-cleanup.sh" ]]; then
             print_status "$GREEN" "✓ storage-cleanup.sh is executable"
             ((tests_passed++))
         else
@@ -718,15 +724,26 @@ test_installation() {
         fi
         
         ((tests_total++))
-        if [[ -x "$INSTALL_DIR/storage-config-fix.sh" ]]; then
+        if [[ -x "storage-config-fix.sh" ]]; then
+            print_status "$GREEN" "✓ storage-config-fix.sh is executable"
+            ((tests_passed++))
+        elif [[ -x "$INSTALL_DIR/storage-config-fix.sh" ]]; then
             print_status "$GREEN" "✓ storage-config-fix.sh is executable"
             ((tests_passed++))
         else
             print_status "$YELLOW" "⚠ storage-config-fix.sh is not executable (may not be installed)"
         fi
         
-        # Test help commands for storage scripts
-        if [[ -x "$INSTALL_DIR/storage-analyzer.sh" ]]; then
+        # Test help commands for storage scripts - check current directory first
+        if [[ -x "storage-analyzer.sh" ]]; then
+            ((tests_total++))
+            if ./storage-analyzer.sh --help &>/dev/null; then
+                print_status "$GREEN" "✓ storage-analyzer help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ storage-analyzer help failed"
+            fi
+        elif [[ -x "$INSTALL_DIR/storage-analyzer.sh" ]]; then
             ((tests_total++))
             if "$INSTALL_DIR/storage-analyzer.sh" --help &>/dev/null; then
                 print_status "$GREEN" "✓ storage-analyzer help works"
@@ -736,7 +753,15 @@ test_installation() {
             fi
         fi
         
-        if [[ -x "$INSTALL_DIR/storage-cleanup.sh" ]]; then
+        if [[ -x "storage-cleanup.sh" ]]; then
+            ((tests_total++))
+            if ./storage-cleanup.sh --help &>/dev/null; then
+                print_status "$GREEN" "✓ storage-cleanup help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ storage-cleanup help failed"
+            fi
+        elif [[ -x "$INSTALL_DIR/storage-cleanup.sh" ]]; then
             ((tests_total++))
             if "$INSTALL_DIR/storage-cleanup.sh" --help &>/dev/null; then
                 print_status "$GREEN" "✓ storage-cleanup help works"
@@ -746,7 +771,15 @@ test_installation() {
             fi
         fi
         
-        if [[ -x "$INSTALL_DIR/storage-config-fix.sh" ]]; then
+        if [[ -x "storage-config-fix.sh" ]]; then
+            ((tests_total++))
+            if ./storage-config-fix.sh --help &>/dev/null; then
+                print_status "$GREEN" "✓ storage-config-fix help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ storage-config-fix help failed"
+            fi
+        elif [[ -x "$INSTALL_DIR/storage-config-fix.sh" ]]; then
             ((tests_total++))
             if "$INSTALL_DIR/storage-config-fix.sh" --help &>/dev/null; then
                 print_status "$GREEN" "✓ storage-config-fix help works"
@@ -859,8 +892,10 @@ main() {
 interactive_mode() {
     print_status "$BLUE" "=== Proxmox Automation Tools Setup ==="
     
-    # Auto-check for updates when script starts
-    auto_check_updates
+    # Auto-check for updates when script starts (skip if we just downloaded)
+    if [[ "$SKIP_AUTO_CHECK" != "true" ]]; then
+        auto_check_updates
+    fi
     
     echo ""
     print_status "$YELLOW" "What would you like to do?"
@@ -939,6 +974,8 @@ select_download_type() {
                 print_status "$YELLOW" "Run '$0 install' to install the downloaded scripts."
                 # Clear any temp files
                 rm -f *.tmp 2>/dev/null
+                # Skip auto-check on return since we just downloaded
+                SKIP_AUTO_CHECK="true"
             else
                 print_status "$RED" "Download failed!"
                 exit 1
@@ -952,6 +989,8 @@ select_download_type() {
                 print_status "$YELLOW" "Run '$0 install-network' to install the downloaded scripts."
                 # Clear any temp files
                 rm -f *.tmp 2>/dev/null
+                # Skip auto-check on return since we just downloaded
+                SKIP_AUTO_CHECK="true"
             else
                 print_status "$RED" "Download failed!"
                 exit 1
@@ -965,6 +1004,8 @@ select_download_type() {
                 print_status "$YELLOW" "Run '$0 install-storage' to install the downloaded scripts."
                 # Clear any temp files
                 rm -f *.tmp 2>/dev/null
+                # Skip auto-check on return since we just downloaded
+                SKIP_AUTO_CHECK="true"
             else
                 print_status "$RED" "Download failed!"
                 exit 1
@@ -1187,6 +1228,8 @@ manual_update_check() {
             # Clear any temp files and refresh status
             rm -f *.tmp 2>/dev/null
             sleep 1
+            # Skip auto-check on return to main menu since we just downloaded
+            SKIP_AUTO_CHECK="true"
         else
             print_status "$RED" "Download failed!"
         fi
