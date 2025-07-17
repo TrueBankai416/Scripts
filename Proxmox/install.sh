@@ -299,6 +299,12 @@ download_scripts() {
             else
                 local final_size=$(stat -c%s "$file" 2>/dev/null || echo "unknown")
                 print_status "$GREEN" "✓ Downloaded $file successfully ($final_size bytes)"
+                
+                # Make .sh files executable
+                if [[ "$file" == *.sh ]]; then
+                    chmod +x "$file"
+                fi
+                
                 downloaded_files+=("$file")
             fi
         else
@@ -317,6 +323,7 @@ download_scripts() {
         echo "  ✓ Total files: $total_files"
         echo "  ✓ Successfully downloaded: ${#downloaded_files[@]}"
         echo "  ✓ Files: ${downloaded_files[*]}"
+        echo "  ✓ Shell scripts are now executable"
         return 0
     else
         print_status "$RED" "Failed to download some files:"
