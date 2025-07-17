@@ -142,8 +142,9 @@ check_for_updates() {
         
         if [[ "$http_code" == "200" && -f "$temp_file" && -s "$temp_file" ]]; then
             # Check if file contains actual content (not 404 page)
-            # Look for GitHub's specific 404 error page structure
-            if grep -q "<!DOCTYPE html>" "$temp_file" 2>/dev/null && grep -q "404.*Not Found" "$temp_file" 2>/dev/null; then
+            # GitHub's raw 404 pages are just plain text "404: Not Found"
+            local file_content=$(cat "$temp_file" 2>/dev/null | tr -d '\r\n ')
+            if [[ "$file_content" == "404:NotFound" ]]; then
                 print_status "$YELLOW" "  ⚠ $base_file not available in repository"
                 rm -f "$temp_file"
                 check_failed+=("$base_file")
@@ -288,8 +289,9 @@ download_scripts() {
         
         if [[ "$http_code" == "200" && -f "$file" && -s "$file" ]]; then
             # Check if file contains actual content (not 404 page)
-            # Look for GitHub's specific 404 error page structure
-            if grep -q "<!DOCTYPE html>" "$file" 2>/dev/null && grep -q "404.*Not Found" "$file" 2>/dev/null; then
+            # GitHub's raw 404 pages are just plain text "404: Not Found"
+            local file_content=$(cat "$file" 2>/dev/null | tr -d '\r\n ')
+            if [[ "$file_content" == "404:NotFound" ]]; then
                 print_status "$RED" "✗ $file not found (404 error)"
                 rm -f "$file"
                 failed_files+=("$file")
@@ -1304,8 +1306,9 @@ auto_check_updates() {
         
         if [[ "$http_code" == "200" && -f "$temp_file" && -s "$temp_file" ]]; then
             # Check if file contains actual content (not 404 page)
-            # Look for GitHub's specific 404 error page structure
-            if ! (grep -q "<!DOCTYPE html>" "$temp_file" 2>/dev/null && grep -q "404.*Not Found" "$temp_file" 2>/dev/null); then
+            # GitHub's raw 404 pages are just plain text "404: Not Found"
+            local file_content=$(cat "$temp_file" 2>/dev/null | tr -d '\r\n ')
+            if [[ "$file_content" != "404:NotFound" ]]; then
                 # Compare files
                 if ! diff -q "$installed_file" "$temp_file" >/dev/null 2>&1; then
                     updated_files+=("$base_file")
