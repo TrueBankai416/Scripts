@@ -928,6 +928,8 @@ select_download_type() {
             if download_scripts "all"; then
                 print_status "$GREEN" "Download completed successfully!"
                 print_status "$YELLOW" "Run '$0 install' to install the downloaded scripts."
+                # Clear any temp files
+                rm -f *.tmp 2>/dev/null
             else
                 print_status "$RED" "Download failed!"
                 exit 1
@@ -939,6 +941,8 @@ select_download_type() {
             if download_scripts "network"; then
                 print_status "$GREEN" "Download completed successfully!"
                 print_status "$YELLOW" "Run '$0 install-network' to install the downloaded scripts."
+                # Clear any temp files
+                rm -f *.tmp 2>/dev/null
             else
                 print_status "$RED" "Download failed!"
                 exit 1
@@ -950,6 +954,8 @@ select_download_type() {
             if download_scripts "storage"; then
                 print_status "$GREEN" "Download completed successfully!"
                 print_status "$YELLOW" "Run '$0 install-storage' to install the downloaded scripts."
+                # Clear any temp files
+                rm -f *.tmp 2>/dev/null
             else
                 print_status "$RED" "Download failed!"
                 exit 1
@@ -1167,6 +1173,11 @@ manual_update_check() {
         # Actually download the scripts
         if download_scripts "$check_type"; then
             print_status "$GREEN" "Download completed successfully!"
+            echo ""
+            print_status "$BLUE" "Refreshing status..."
+            # Clear any temp files and refresh status
+            rm -f *.tmp 2>/dev/null
+            sleep 1
         else
             print_status "$RED" "Download failed!"
         fi
@@ -1202,19 +1213,26 @@ auto_check_updates() {
     local missing_files=()
     local updated_files=()
     
-    # Check network files
+    # Check network files - prioritize current directory, then installed location
     if [[ "$installed_network" == true ]]; then
         for file in "${network_files[@]}"; do
             local installed_file=""
             case "$file" in
                 "fix-network.sh")
-                    installed_file="$INSTALL_DIR/fix-network.sh"
+                    if [[ -f "$file" ]]; then
+                        installed_file="$file"
+                    elif [[ -f "$INSTALL_DIR/fix-network.sh" ]]; then
+                        installed_file="$INSTALL_DIR/fix-network.sh"
+                    fi
                     ;;
                 "network-monitor.sh")
-                    installed_file="$INSTALL_DIR/network-monitor.sh"
+                    if [[ -f "$file" ]]; then
+                        installed_file="$file"
+                    elif [[ -f "$INSTALL_DIR/network-monitor.sh" ]]; then
+                        installed_file="$INSTALL_DIR/network-monitor.sh"
+                    fi
                     ;;
                 "network-fix.service")
-                    # Service file is in current directory or service dir
                     if [[ -f "$file" ]]; then
                         installed_file="$file"
                     elif [[ -f "$SERVICE_DIR/network-fix.service" ]]; then
@@ -1231,19 +1249,31 @@ auto_check_updates() {
         done
     fi
     
-    # Check storage files
+    # Check storage files - prioritize current directory, then installed location
     if [[ "$installed_storage" == true ]]; then
         for file in "${storage_files[@]}"; do
             local installed_file=""
             case "$file" in
                 "storage-analyzer.sh")
-                    installed_file="$INSTALL_DIR/storage-analyzer.sh"
+                    if [[ -f "$file" ]]; then
+                        installed_file="$file"
+                    elif [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]]; then
+                        installed_file="$INSTALL_DIR/storage-analyzer.sh"
+                    fi
                     ;;
                 "storage-cleanup.sh")
-                    installed_file="$INSTALL_DIR/storage-cleanup.sh"
+                    if [[ -f "$file" ]]; then
+                        installed_file="$file"
+                    elif [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]]; then
+                        installed_file="$INSTALL_DIR/storage-cleanup.sh"
+                    fi
                     ;;
                 "storage-config-fix.sh")
-                    installed_file="$INSTALL_DIR/storage-config-fix.sh"
+                    if [[ -f "$file" ]]; then
+                        installed_file="$file"
+                    elif [[ -f "$INSTALL_DIR/storage-config-fix.sh" ]]; then
+                        installed_file="$INSTALL_DIR/storage-config-fix.sh"
+                    fi
                     ;;
             esac
             
@@ -1255,11 +1285,11 @@ auto_check_updates() {
         done
     fi
     
-    # Check installer
-    if [[ "$0" == "$INSTALL_DIR/install.sh" ]]; then
-        installed_files+=("$INSTALL_DIR/install.sh")
-    elif [[ -f "install.sh" ]]; then
+    # Check installer - always check current directory first, then installed location
+    if [[ -f "install.sh" ]]; then
         installed_files+=("install.sh")
+    elif [[ "$0" == "$INSTALL_DIR/install.sh" ]]; then
+        installed_files+=("$INSTALL_DIR/install.sh")
     fi
     
     # Quick check for updates to existing files (silent)
