@@ -51,6 +51,10 @@ check_for_updates() {
         "storage-config-fix.sh"
     )
     
+    local console_files=(
+        "console-fix.sh"
+    )
+    
     local installer_files=(
         "install.sh"
     )
@@ -63,8 +67,11 @@ check_for_updates() {
         "storage")
             files=("${storage_files[@]}" "${installer_files[@]}")
             ;;
+        "console")
+            files=("${console_files[@]}" "${installer_files[@]}")
+            ;;
         "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}" "${installer_files[@]}")
+            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${installer_files[@]}")
             ;;
     esac
     
@@ -243,6 +250,10 @@ download_scripts() {
         "storage-config-fix.sh"
     )
     
+    local console_files=(
+        "console-fix.sh"
+    )
+    
     local files=()
     case "$script_type" in
         "network")
@@ -253,8 +264,12 @@ download_scripts() {
             files=("${storage_files[@]}")
             print_status "$YELLOW" "Downloading storage scripts only..."
             ;;
+        "console")
+            files=("${console_files[@]}")
+            print_status "$YELLOW" "Downloading console scripts only..."
+            ;;
         "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}")
+            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}")
             print_status "$YELLOW" "Downloading all scripts..."
             ;;
     esac
@@ -399,6 +414,16 @@ install_scripts() {
         fi
     fi
     
+    # Install console scripts
+    if [[ "$script_type" == "all" || "$script_type" == "console" ]]; then
+        if [[ -f "console-fix.sh" ]]; then
+            cp console-fix.sh "$INSTALL_DIR/console-fix.sh"
+            chmod +x "$INSTALL_DIR/console-fix.sh"
+            ln -sf "$INSTALL_DIR/console-fix.sh" "$INSTALL_DIR/console-fix"
+            ((installed_count++))
+        fi
+    fi
+    
     if [[ $installed_count -eq 0 ]]; then
         print_status "$RED" "No scripts were installed - no valid files found!"
         return 1
@@ -413,6 +438,7 @@ install_scripts() {
     [[ -f "$INSTALL_DIR/storage-analyzer.sh" ]] && echo "    ✓ storage-analyzer.sh -> $INSTALL_DIR/storage-analyzer.sh"
     [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]] && echo "    ✓ storage-cleanup.sh -> $INSTALL_DIR/storage-cleanup.sh"
     [[ -f "$INSTALL_DIR/storage-config-fix.sh" ]] && echo "    ✓ storage-config-fix.sh -> $INSTALL_DIR/storage-config-fix.sh"
+    [[ -f "$INSTALL_DIR/console-fix.sh" ]] && echo "    ✓ console-fix.sh -> $INSTALL_DIR/console-fix.sh"
     echo "  Symlinks created for all installed scripts"
 }
 
