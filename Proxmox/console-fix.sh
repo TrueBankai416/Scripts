@@ -244,6 +244,7 @@ check_file_permissions() {
         "/var/lib/pve-cluster"
         "/var/log/pve"
         "/var/lib/vz"
+        "/var/tmp"
     )
     
     for dir in "${directories[@]}"; do
@@ -258,8 +259,21 @@ check_file_permissions() {
                 log_message "ERROR" "Directory $dir is not accessible"
                 permission_issues=true
             fi
+            
+            # Special check for /var/tmp - needs sticky bit (1777)
+            if [[ "$dir" == "/var/tmp" && "$perms" != "1777" ]]; then
+                echo -e "${YELLOW}⚠ /var/tmp permissions should be 1777 (sticky bit)${NC}"
+                log_message "WARN" "/var/tmp has incorrect permissions: $perms (should be 1777)"
+                permission_issues=true
+            fi
         else
-            echo -e "${YELLOW}⚠ Directory $dir does not exist${NC}"
+            if [[ "$dir" == "/var/tmp" ]]; then
+                echo -e "${RED}✗ CRITICAL: Directory $dir does not exist (required for console temp files)${NC}"
+                log_message "ERROR" "Critical directory $dir does not exist"
+                permission_issues=true
+            else
+                echo -e "${YELLOW}⚠ Directory $dir does not exist${NC}"
+            fi
         fi
     done
     
@@ -502,29 +516,36 @@ show_fix_recommendations() {
     echo "Based on the diagnosis, try these solutions in order:"
     echo ""
     
-    echo "1. Service Issues:"
+    echo "1. Critical Directory Issues:"
+    echo "   - Check if /var/tmp exists: ls -la /var/tmp"
+    echo "   - Recreate if missing: mkdir -p /var/tmp && chmod 1777 /var/tmp"
+    echo "   - Restart services after fixing: systemctl restart pveproxy"
+    echo ""
+    
+    echo "2. Service Issues:"
     echo "   - Restart Proxmox services (pveproxy, pvedaemon, pvestatd)"
     echo "   - Check service logs: journalctl -u pveproxy -f"
     echo ""
     
-    echo "2. Disk Space Issues:"
+    echo "3. Disk Space Issues:"
     echo "   - Free up disk space on root filesystem"
     echo "   - Clean old log files and temporary data"
     echo "   - Use storage-cleanup.sh from this repository"
     echo ""
     
-    echo "3. SSL Certificate Issues:"
+    echo "4. SSL Certificate Issues:"
     echo "   - Regenerate SSL certificates"
     echo "   - Check certificate expiration dates"
     echo ""
     
-    echo "4. Permission Issues:"
+    echo "5. Permission Issues:"
     echo "   - Check /etc/pve directory permissions"
     echo "   - Verify SSL file ownership and permissions"
+    echo "   - Ensure /var/tmp has 1777 permissions (sticky bit)"
     echo ""
     
-    echo "5. Console-Specific Issues:"
-    echo "   - Verify noVNC installation"
+    echo "6. Console-Specific Issues:"
+    echo "   - Verify noVNC installation: apt install novnc"
     echo "   - Check firewall rules for port 8006"
     echo "   - Test with different browsers"
     echo ""
@@ -588,31 +609,54 @@ run_automated_fixes() {
     
     echo "This will attempt to fix common console issues automatically."
     echo "The following actions will be performed:"
-    echo "1. Restart Proxmox services"
-    echo "2. Clean up disk space if needed"
-    echo "3. Regenerate SSL certificates if corrupted"
+    echo "1. Check and fix /var/tmp directory"
+    echo "2. Restart Proxmox services"
+    echo "3. Clean up disk space if needed"
+    echo "4. Regenerate SSL certificates if corrupted"
     echo ""
     
     if confirm_action "Proceed with automated fixes"; then
         log_message "INFO" "Starting automated console fixes"
         
-        # Fix 1: Restart services
-        echo -e "${YELLOW}Fix 1: Restarting Proxmox services...${NC}"
+        # Fix 1: Check and fix /var/tmp directory
+        echo -e "${YELLOW}Fix 1: Checking /var/tmp directory...${NC}"
+        if [[ ! -d "/var/tmp" ]]; then
+            echo "Creating missing /var/tmp directory..."
+            mkdir -p /var/tmp
+            chmod 1777 /var/tmp
+            chown root:root /var/tmp
+            echo -e "${GREEN}✓ Created /var/tmp with proper permissions${NC}"
+            log_message "INFO" "Created missing /var/tmp directory"
+        else
+            local perms=$(stat -c "%a" /var/tmp 2>/dev/null)
+            if [[ "$perms" != "1777" ]]; then
+                echo "Fixing /var/tmp permissions..."
+                chmod 1777 /var/tmp
+                chown root:root /var/tmp
+                echo -e "${GREEN}✓ Fixed /var/tmp permissions${NC}"
+                log_message "INFO" "Fixed /var/tmp permissions from $perms to 1777"
+            else
+                echo -e "${GREEN}✓ /var/tmp directory exists with correct permissions${NC}"
+            fi
+        fi
+        
+        # Fix 2: Restart services
+        echo -e "${YELLOW}Fix 2: Restarting Proxmox services...${NC}"
         systemctl restart pvestatd pvedaemon pveproxy
         sleep 5
         
-        # Fix 2: Check and clean disk space if needed
+        # Fix 3: Check and clean disk space if needed
         local root_usage=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
         if [[ $root_usage -gt 85 ]]; then
-            echo -e "${YELLOW}Fix 2: Cleaning disk space...${NC}"
+            echo -e "${YELLOW}Fix 3: Cleaning disk space...${NC}"
             find /var/log -name "*.gz" -mtime +3 -delete 2>/dev/null
             journalctl --vacuum-time=2d 2>/dev/null
             apt clean 2>/dev/null
         fi
         
-        # Fix 3: Test and regenerate certificates if needed
+        # Fix 4: Test and regenerate certificates if needed
         if ! openssl x509 -in "/etc/pve/local/pve-ssl.pem" -noout -checkend 0 2>/dev/null; then
-            echo -e "${YELLOW}Fix 3: Regenerating SSL certificates...${NC}"
+            echo -e "${YELLOW}Fix 4: Regenerating SSL certificates...${NC}"
             pvecm updatecerts --force 2>/dev/null
             systemctl restart pveproxy
         fi
