@@ -59,7 +59,16 @@ run_db_command() {
         echo "Error: MYSQL_PASSWORD not found in .env file"
         exit 1
     fi
-    docker exec -i mariadb mysql -u "${MYSQL_USER:-nextcloud}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE:-nextcloud}" -h "${MYSQL_HOST:-mariadb}" -e "$1"
+    
+    # Try mysql first (for older MariaDB versions), then mariadb (for newer versions)
+    if docker exec -i mariadb mysql -u "${MYSQL_USER:-nextcloud}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE:-nextcloud}" -h "${MYSQL_HOST:-mariadb}" -e "$1" 2>/dev/null; then
+        return 0
+    elif docker exec -i mariadb mariadb -u "${MYSQL_USER:-nextcloud}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE:-nextcloud}" -h "${MYSQL_HOST:-mariadb}" -e "$1" 2>/dev/null; then
+        return 0
+    else
+        echo "Error: Failed to connect to MariaDB using both 'mysql' and 'mariadb' commands"
+        return 1
+    fi
 }
 
 # Check if containers are running
