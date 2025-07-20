@@ -272,6 +272,10 @@ download_scripts() {
         "root-filesystem-expand.sh"
     )
     
+    local firmware_files=(
+        "firmware-scanner.sh"
+    )
+    
     local files=()
     case "$script_type" in
         "network")
