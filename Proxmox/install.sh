@@ -59,6 +59,10 @@ check_for_updates() {
         "root-filesystem-expand.sh"
     )
     
+    local firmware_files=(
+        "firmware-scanner.sh"
+    )
+    
     local installer_files=(
         "install.sh"
     )
@@ -77,8 +81,11 @@ check_for_updates() {
         "root")
             files=("${root_expansion_files[@]}" "${installer_files[@]}")
             ;;
+        "firmware")
+            files=("${firmware_files[@]}" "${installer_files[@]}")
+            ;;
         "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_expansion_files[@]}" "${installer_files[@]}")
+            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_expansion_files[@]}" "${firmware_files[@]}" "${installer_files[@]}")
             ;;
     esac
     
@@ -283,8 +290,12 @@ download_scripts() {
             files=("${root_expansion_files[@]}")
             print_status "$YELLOW" "Downloading root filesystem expansion script only..."
             ;;
+        "firmware")
+            files=("${firmware_files[@]}")
+            print_status "$YELLOW" "Downloading firmware scanner script only..."
+            ;;
         "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_expansion_files[@]}")
+            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_expansion_files[@]}" "${firmware_files[@]}")
             print_status "$YELLOW" "Downloading all scripts..."
             ;;
     esac
@@ -449,6 +460,16 @@ install_scripts() {
         fi
     fi
     
+    # Install firmware scanner script
+    if [[ "$script_type" == "all" || "$script_type" == "firmware" ]]; then
+        if [[ -f "firmware-scanner.sh" ]]; then
+            cp firmware-scanner.sh "$INSTALL_DIR/firmware-scanner.sh"
+            chmod +x "$INSTALL_DIR/firmware-scanner.sh"
+            ln -sf "$INSTALL_DIR/firmware-scanner.sh" "$INSTALL_DIR/firmware-scanner"
+            ((installed_count++))
+        fi
+    fi
+    
     if [[ $installed_count -eq 0 ]]; then
         print_status "$RED" "No scripts were installed - no valid files found!"
         return 1
@@ -465,6 +486,7 @@ install_scripts() {
     [[ -f "$INSTALL_DIR/storage-config-fix.sh" ]] && echo "    ✓ storage-config-fix.sh -> $INSTALL_DIR/storage-config-fix.sh"
     [[ -f "$INSTALL_DIR/console-fix.sh" ]] && echo "    ✓ console-fix.sh -> $INSTALL_DIR/console-fix.sh"
     [[ -f "$INSTALL_DIR/root-filesystem-expand.sh" ]] && echo "    ✓ root-filesystem-expand.sh -> $INSTALL_DIR/root-filesystem-expand.sh"
+    [[ -f "$INSTALL_DIR/firmware-scanner.sh" ]] && echo "    ✓ firmware-scanner.sh -> $INSTALL_DIR/firmware-scanner.sh"
     echo "  Symlinks created for all installed scripts"
 }
 
