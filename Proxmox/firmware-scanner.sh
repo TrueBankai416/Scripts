@@ -1877,12 +1877,56 @@ launch_dc_toolkit_with_firmware() {
         
         # Try to run DC Toolkit
         echo "Executing: $toolkit_exec"
+        
+        # Check if it's a 32-bit binary that needs 32-bit libraries
+        local arch_info=$(file "$toolkit_exec" 2>/dev/null)
+        if echo "$arch_info" | grep -qi "32-bit"; then
+            echo -e "${YELLOW}⚠ 32-bit executable detected${NC}"
+            echo "This may require 32-bit libraries on 64-bit systems"
+            echo "Install with: apt install libc6:i386 lib32stdc++6"
+        fi
+        
         if "$toolkit_exec" 2>&1; then
             echo -e "${GREEN}✓ DC Toolkit session completed${NC}"
             post_update_verification "$device" "$model"
         else
-            echo -e "${RED}✗ DC Toolkit exited with error or completed${NC}"
-            echo "This may be normal - check if firmware was updated"
+            local exit_code=$?
+            echo -e "${RED}✗ DC Toolkit execution failed (exit code: $exit_code)${NC}"
+            
+            # Check if we have decrypted .bin files as fallback
+            local temp_dir=$(dirname "$toolkit_exec")
+            local bin_files=$(find "$temp_dir" -name "*.bin" 2>/dev/null | head -5)
+            
+            if [[ -n "$bin_files" ]]; then
+                echo ""
+                echo -e "${CYAN}Good news: Found decrypted Samsung firmware .bin files!${NC}"
+                echo "Available firmware files:"
+                while IFS= read -r bin_file; do
+                    [[ -n "$bin_file" ]] && echo "  • $(basename "$bin_file")"
+                done <<< "$bin_files"
+                echo ""
+                
+                # Suggest using nvme-cli instead
+                echo -e "${YELLOW}DC Toolkit GUI failed, but we can use nvme-cli with the decrypted firmware${NC}"
+                if confirm_action "Would you like to use nvme-cli with the decrypted .bin files instead?"; then
+                    local main_bin=$(echo "$bin_files" | head -1)
+                    echo "Using firmware file: $(basename "$main_bin")"
+                    use_nvme_cli_with_downloaded_firmware "$device" "$model" "$main_bin"
+                    return
+                fi
+            fi
+            
+            echo ""
+            echo "DC Toolkit execution failed. This could be due to:"
+            echo "• Missing 32-bit libraries (if 32-bit executable)"
+            echo "• Missing dependencies or wrong architecture"
+            echo "• GUI environment requirements not met"
+            echo ""
+            echo "Manual troubleshooting:"
+            echo "1. Check file type: file $toolkit_exec"
+            echo "2. Check dependencies: ldd $toolkit_exec"
+            echo "3. Install 32-bit support: apt install libc6:i386 lib32stdc++6"
+            echo ""
             post_update_verification "$device" "$model"
         fi
     fi
