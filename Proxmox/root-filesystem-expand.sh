@@ -174,10 +174,11 @@ check_expansion_opportunities() {
     fi
     local disk_gb=$((disk_size / 1073741824))
     
-    # Get partition size (ensure single result)
-    local partition_size=$(lsblk -bno SIZE "$PV_DEVICE" 2>/dev/null | head -1)
+    # Get partition size (ensure single result and trim whitespace)
+    local partition_size=$(lsblk -bno SIZE "$PV_DEVICE" 2>/dev/null | head -1 | tr -d ' ')
     if [[ -z "$partition_size" || ! "$partition_size" =~ ^[0-9]+$ ]]; then
         echo -e "${RED}Error: Could not get partition size for $PV_DEVICE${NC}"
+        echo "DEBUG: partition_size value: '$partition_size'"
         return 1
     fi
     local partition_gb=$((partition_size / 1073741824))
