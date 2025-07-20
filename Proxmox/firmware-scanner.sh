@@ -1909,9 +1909,56 @@ launch_dc_toolkit_with_firmware() {
                 # Suggest using nvme-cli instead
                 echo -e "${YELLOW}DC Toolkit GUI failed, but we can use nvme-cli with the decrypted firmware${NC}"
                 if confirm_action "Would you like to use nvme-cli with the decrypted .bin files instead?"; then
-                    local main_bin=$(echo "$bin_files" | head -1)
-                    echo "Using firmware file: $(basename "$main_bin")"
-                    use_nvme_cli_with_downloaded_firmware "$device" "$model" "$main_bin"
+                    
+                    # Let user choose which firmware file to use
+                    local firmware_choice=""
+                    local bin_array=()
+                    while IFS= read -r bin_file; do
+                        [[ -n "$bin_file" ]] && bin_array+=("$bin_file")
+                    done <<< "$bin_files"
+                    
+                    if [[ ${#bin_array[@]} -eq 1 ]]; then
+                        # Only one file, use it
+                        firmware_choice="${bin_array[0]}"
+                        echo "Using firmware file: $(basename "$firmware_choice")"
+                    else
+                        # Multiple files, let user choose
+                        echo ""
+                        echo "Multiple firmware files available:"
+                        local iso_name=$(find "$temp_dir" -name "*.iso" 2>/dev/null | head -1)
+                        local iso_version=""
+                        if [[ -n "$iso_name" ]]; then
+                            iso_version=$(basename "$iso_name" | grep -o '[A-Z0-9]\{8\}' | head -1)
+                        fi
+                        
+                        for i in "${!bin_array[@]}"; do
+                            local bin_name=$(basename "${bin_array[i]}")
+                            local recommendation=""
+                            
+                            # Check if this firmware matches the ISO version
+                            if [[ -n "$iso_version" && "$bin_name" =~ $iso_version ]]; then
+                                recommendation=" ${GREEN}← Recommended (matches ISO: $iso_version)${NC}"
+                            elif [[ "$bin_name" =~ ^[A-Z0-9]{8}\.bin$ ]]; then
+                                recommendation=" ${BLUE}← Main firmware${NC}"
+                            fi
+                            
+                            echo "$((i+1)). $bin_name$recommendation"
+                        done
+                        
+                        echo ""
+                        echo -n "Select firmware file (1-${#bin_array[@]}): "
+                        read -r choice
+                        
+                        if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 && "$choice" -le ${#bin_array[@]} ]]; then
+                            firmware_choice="${bin_array[$((choice-1))]}"
+                            echo "Selected firmware file: $(basename "$firmware_choice")"
+                        else
+                            echo "Invalid choice. Using first file: $(basename "${bin_array[0]}")"
+                            firmware_choice="${bin_array[0]}"
+                        fi
+                    fi
+                    
+                    use_nvme_cli_with_downloaded_firmware "$device" "$model" "$firmware_choice"
                     return
                 fi
             fi
