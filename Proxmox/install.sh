@@ -55,6 +55,10 @@ check_for_updates() {
         "console-fix.sh"
     )
     
+    local root_expansion_files=(
+        "root-filesystem-expand.sh"
+    )
+    
     local installer_files=(
         "install.sh"
     )
@@ -70,8 +74,11 @@ check_for_updates() {
         "console")
             files=("${console_files[@]}" "${installer_files[@]}")
             ;;
+        "root")
+            files=("${root_expansion_files[@]}" "${installer_files[@]}")
+            ;;
         "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${installer_files[@]}")
+            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_expansion_files[@]}" "${installer_files[@]}")
             ;;
     esac
     
@@ -254,6 +261,10 @@ download_scripts() {
         "console-fix.sh"
     )
     
+    local root_expansion_files=(
+        "root-filesystem-expand.sh"
+    )
+    
     local files=()
     case "$script_type" in
         "network")
@@ -268,8 +279,12 @@ download_scripts() {
             files=("${console_files[@]}")
             print_status "$YELLOW" "Downloading console scripts only..."
             ;;
+        "root")
+            files=("${root_expansion_files[@]}")
+            print_status "$YELLOW" "Downloading root filesystem expansion script only..."
+            ;;
         "all"|*)
-            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}")
+            files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_expansion_files[@]}")
             print_status "$YELLOW" "Downloading all scripts..."
             ;;
     esac
@@ -424,6 +439,16 @@ install_scripts() {
         fi
     fi
     
+    # Install root filesystem expansion script
+    if [[ "$script_type" == "all" || "$script_type" == "root" ]]; then
+        if [[ -f "root-filesystem-expand.sh" ]]; then
+            cp root-filesystem-expand.sh "$INSTALL_DIR/root-filesystem-expand.sh"
+            chmod +x "$INSTALL_DIR/root-filesystem-expand.sh"
+            ln -sf "$INSTALL_DIR/root-filesystem-expand.sh" "$INSTALL_DIR/root-filesystem-expand"
+            ((installed_count++))
+        fi
+    fi
+    
     if [[ $installed_count -eq 0 ]]; then
         print_status "$RED" "No scripts were installed - no valid files found!"
         return 1
@@ -439,6 +464,7 @@ install_scripts() {
     [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]] && echo "    ✓ storage-cleanup.sh -> $INSTALL_DIR/storage-cleanup.sh"
     [[ -f "$INSTALL_DIR/storage-config-fix.sh" ]] && echo "    ✓ storage-config-fix.sh -> $INSTALL_DIR/storage-config-fix.sh"
     [[ -f "$INSTALL_DIR/console-fix.sh" ]] && echo "    ✓ console-fix.sh -> $INSTALL_DIR/console-fix.sh"
+    [[ -f "$INSTALL_DIR/root-filesystem-expand.sh" ]] && echo "    ✓ root-filesystem-expand.sh -> $INSTALL_DIR/root-filesystem-expand.sh"
     echo "  Symlinks created for all installed scripts"
 }
 
@@ -840,7 +866,9 @@ main() {
     
     # Define files needed based on script type
     local network_files=("fix-network.sh" "network-monitor.sh" "network-fix.service")
-    local storage_files=("storage-analyzer.sh" "storage-cleanup.sh")
+    local storage_files=("storage-analyzer.sh" "storage-cleanup.sh" "storage-config-fix.sh")
+    local console_files=("console-fix.sh")
+    local root_files=("root-filesystem-expand.sh")
     local required_files=()
     
     case "$script_type" in
@@ -852,8 +880,16 @@ main() {
             required_files=("${storage_files[@]}")
             print_status "$YELLOW" "Installing storage tools only..."
             ;;
+        "console")
+            required_files=("${console_files[@]}")
+            print_status "$YELLOW" "Installing console tools only..."
+            ;;
+        "root")
+            required_files=("${root_files[@]}")
+            print_status "$YELLOW" "Installing root filesystem expansion tool only..."
+            ;;
         "all"|*)
-            required_files=("${network_files[@]}" "${storage_files[@]}")
+            required_files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_files[@]}")
             print_status "$YELLOW" "Installing all tools..."
             ;;
     esac
@@ -925,16 +961,18 @@ interactive_mode() {
     
     echo ""
     print_status "$YELLOW" "What would you like to do?"
-    echo "1. Download and install all Proxmox tools (network + storage)"
+    echo "1. Download and install all Proxmox tools (network + storage + console + root expansion)"
     echo "2. Download and install network tools only"
     echo "3. Download and install storage tools only"
-    echo "4. Download scripts only (no installation)"
-    echo "5. Check for script updates"
-    echo "6. Uninstall Proxmox tools"
-    echo "7. Test current installation"
-    echo "8. Exit"
+    echo "4. Download and install console tools only" 
+    echo "5. Download and install root filesystem expansion tool only"
+    echo "6. Download scripts only (no installation)"
+    echo "7. Check for script updates"
+    echo "8. Uninstall Proxmox tools"
+    echo "9. Test current installation"
+    echo "10. Exit"
     echo ""
-    echo -n "Enter your choice (1-8): "
+    echo -n "Enter your choice (1-10): "
     read -r choice
     
     case "$choice" in
@@ -952,22 +990,30 @@ interactive_mode() {
             ;;
         4)
             echo ""
-            select_download_type
+            main "console"
             ;;
         5)
             echo ""
-            manual_update_check
+            main "root"
             ;;
         6)
             echo ""
-            uninstall_tools "interactive"
+            select_download_type
             ;;
         7)
+            echo ""
+            manual_update_check
+            ;;
+        8)
+            echo ""
+            uninstall_tools "interactive"
+            ;;
+        9)
             echo ""
             check_root
             test_installation
             ;;
-        8)
+        10)
             print_status "$YELLOW" "Exiting..."
             exit 0
             ;;
@@ -1422,6 +1468,12 @@ case "${1:-interactive}" in
     "install-storage")
         main "storage"
         ;;
+    "install-console")
+        main "console"
+        ;;
+    "install-root")
+        main "root"
+        ;;
     "download"|"2")
         select_download_type
         ;;
@@ -1447,6 +1499,8 @@ case "${1:-interactive}" in
         echo "  install          - Download and install all Proxmox tools"
         echo "  install-network  - Download and install network tools only"
         echo "  install-storage  - Download and install storage tools only"
+        echo "  install-console  - Download and install console tools only"
+        echo "  install-root     - Download and install root expansion tool only"
         echo "  download         - Download scripts from repository only"
         echo "  uninstall        - Remove all Proxmox tools"
         echo "  test             - Test installation"
@@ -1454,14 +1508,16 @@ case "${1:-interactive}" in
         echo "  help             - Show this help message"
         echo ""
         echo "Interactive Options:"
-        echo "  1. Download and install all Proxmox tools (network + storage)"
+        echo "  1. Download and install all Proxmox tools (network + storage + console + root expansion)"
         echo "  2. Download and install network tools only"
         echo "  3. Download and install storage tools only"
-        echo "  4. Download scripts only (no installation)"
-        echo "  5. Check for script updates"
-        echo "  6. Uninstall Proxmox tools"
-        echo "  7. Test current installation"
-        echo "  8. Exit"
+        echo "  4. Download and install console tools only"
+        echo "  5. Download and install root filesystem expansion tool only"
+        echo "  6. Download scripts only (no installation)"
+        echo "  7. Check for script updates"
+        echo "  8. Uninstall Proxmox tools"
+        echo "  9. Test current installation"
+        echo "  10. Exit"
         echo ""
         echo "Repository: https://github.com/TrueBankai416/Scripts"
         echo "Script location: $REPO_URL"
