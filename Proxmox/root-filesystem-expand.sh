@@ -280,6 +280,203 @@ expand_pv() {
     fi
 }
 
+# Function to show current LV status and available space
+show_lv_status() {
+    echo -e "${BLUE}=== Current Logical Volume Status ===${NC}"
+    
+    # Show VG info
+    echo "Volume Group Information:"
+    vgs "$VG_NAME" 2>/dev/null
+    echo ""
+    
+    # Show current LVs
+    echo "Current Logical Volumes:"
+    lvs -o lv_name,lv_size,lv_path "$VG_NAME" 2>/dev/null
+    echo ""
+    
+    # Show available free space
+    local vg_free=$(vgs --noheadings -o vg_free "$VG_NAME" 2>/dev/null | head -1 | tr -d ' ')
+    echo "Available free space: ${vg_free}"
+    echo ""
+}
+
+# Function to parse size input (supports G, GB, T, TB, etc.)
+parse_size() {
+    local input="$1"
+    local size_bytes=""
+    
+    # Remove spaces and convert to uppercase
+    input=$(echo "$input" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
+    
+    # Extract numeric part and unit
+    if [[ "$input" =~ ^([0-9]+)([KMGTPE]?B?)$ ]]; then
+        local number="${BASH_REMATCH[1]}"
+        local unit="${BASH_REMATCH[2]}"
+        
+        case "$unit" in
+            ""|"B") size_bytes="$number" ;;
+            "K"|"KB") size_bytes=$((number * 1024)) ;;
+            "M"|"MB") size_bytes=$((number * 1024 * 1024)) ;;
+            "G"|"GB") size_bytes=$((number * 1024 * 1024 * 1024)) ;;
+            "T"|"TB") size_bytes=$((number * 1024 * 1024 * 1024 * 1024)) ;;
+            *) return 1 ;;
+        esac
+    else
+        return 1
+    fi
+    
+    echo "$size_bytes"
+    return 0
+}
+
+# Function for custom logical volume expansion
+custom_lv_expansion() {
+    echo -e "${BLUE}=== Custom Logical Volume Expansion ===${NC}"
+    
+    if ! detect_root_setup; then
+        return 1
+    fi
+    
+    # Show current status
+    show_lv_status
+    
+    while true; do
+        echo -e "${YELLOW}Custom LV Expansion Menu:${NC}"
+        echo "1. Expand a logical volume to specific size"
+        echo "2. Show current LV status"
+        echo "3. Return to main menu"
+        echo ""
+        
+        echo -n "Enter your choice (1-3): "
+        read -r lv_choice
+        
+        case "$lv_choice" in
+            1)
+                # List available LVs
+                echo ""
+                echo "Available Logical Volumes in VG '$VG_NAME':"
+                lvs --noheadings -o lv_name,lv_size "$VG_NAME" 2>/dev/null | nl
+                echo ""
+                
+                # Get LV selection
+                echo -n "Enter LV name to expand (e.g., root, data): "
+                read -r lv_name
+                
+                # Validate LV exists
+                if ! lvs "$VG_NAME/$lv_name" >/dev/null 2>&1; then
+                    echo -e "${RED}Error: Logical volume '$lv_name' not found in VG '$VG_NAME'${NC}"
+                    continue
+                fi
+                
+                # Get current size
+                local current_size=$(lvs --noheadings -o lv_size "$VG_NAME/$lv_name" 2>/dev/null | tr -d ' ')
+                echo "Current size of '$lv_name': $current_size"
+                
+                # Get target size
+                echo -n "Enter target size (e.g., 850G, 1T, 500GB): "
+                read -r target_size
+                
+                # Parse and validate size
+                if ! parsed_bytes=$(parse_size "$target_size"); then
+                    echo -e "${RED}Error: Invalid size format. Use formats like: 850G, 1T, 500GB${NC}"
+                    continue
+                fi
+                
+                # Convert target size for LVM command
+                local lvm_size=""
+                if [[ "$target_size" =~ ^[0-9]+[Tt]B?$ ]]; then
+                    lvm_size="${target_size^^}"  # Convert to uppercase
+                elif [[ "$target_size" =~ ^[0-9]+[Gg]B?$ ]]; then
+                    lvm_size="${target_size^^}"
+                else
+                    lvm_size="$target_size"
+                fi
+                
+                # Confirm expansion
+                echo ""
+                echo -e "${YELLOW}Expansion Summary:${NC}"
+                echo "LV: $VG_NAME/$lv_name"
+                echo "Current size: $current_size"
+                echo "Target size: $target_size"
+                echo ""
+                echo -n "Proceed with expansion? [y/N]: "
+                read -r confirm
+                
+                if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                    echo "Expansion cancelled"
+                    continue
+                fi
+                
+                # Perform expansion
+                echo ""
+                echo "Expanding LV $VG_NAME/$lv_name to $lvm_size..."
+                log_message "INFO" "Expanding LV $VG_NAME/$lv_name to $lvm_size"
+                
+                if lvextend -L "$lvm_size" "$VG_NAME/$lv_name" 2>/dev/null; then
+                    echo -e "${GREEN}✓ Logical volume expanded successfully${NC}"
+                    log_message "INFO" "LV $VG_NAME/$lv_name expanded to $lvm_size"
+                    
+                    # Expand filesystem
+                    local lv_path="/dev/$VG_NAME/$lv_name"
+                    echo "Expanding filesystem on $lv_path..."
+                    
+                    # Detect filesystem type
+                    local fs_type=$(blkid -o value -s TYPE "$lv_path" 2>/dev/null)
+                    
+                    case "$fs_type" in
+                        ext2|ext3|ext4)
+                            if resize2fs "$lv_path" 2>/dev/null; then
+                                echo -e "${GREEN}✓ Filesystem expanded successfully (ext)${NC}"
+                                log_message "INFO" "Filesystem expanded on $lv_path (ext)"
+                            else
+                                echo -e "${YELLOW}⚠ LV expanded but filesystem resize failed${NC}"
+                                log_message "WARNING" "Filesystem resize failed on $lv_path (ext)"
+                            fi
+                            ;;
+                        xfs)
+                            # For XFS, we need the mount point
+                            local mount_point=$(findmnt -n -o TARGET "$lv_path" 2>/dev/null)
+                            if [[ -n "$mount_point" ]] && xfs_growfs "$mount_point" 2>/dev/null; then
+                                echo -e "${GREEN}✓ Filesystem expanded successfully (xfs)${NC}"
+                                log_message "INFO" "Filesystem expanded on $lv_path (xfs)"
+                            else
+                                echo -e "${YELLOW}⚠ LV expanded but filesystem resize failed${NC}"
+                                log_message "WARNING" "Filesystem resize failed on $lv_path (xfs)"
+                            fi
+                            ;;
+                        *)
+                            echo -e "${YELLOW}⚠ LV expanded but unknown filesystem type: $fs_type${NC}"
+                            echo "You may need to manually resize the filesystem"
+                            log_message "WARNING" "Unknown filesystem type $fs_type on $lv_path"
+                            ;;
+                    esac
+                    
+                    echo ""
+                    echo "Updated status:"
+                    show_lv_status
+                else
+                    echo -e "${RED}✗ Failed to expand logical volume${NC}"
+                    log_message "ERROR" "Failed to expand LV $VG_NAME/$lv_name to $lvm_size"
+                fi
+                ;;
+            2)
+                show_lv_status
+                ;;
+            3)
+                return 0
+                ;;
+            *)
+                echo -e "${RED}Invalid choice${NC}"
+                ;;
+        esac
+        
+        echo ""
+        echo -n "Press Enter to continue..."
+        read -r
+        echo ""
+    done
+}
+
 # Function to expand logical volume and filesystem
 expand_lv_and_fs() {
     echo -e "${BLUE}=== Expanding Logical Volume and Filesystem ===${NC}"
@@ -427,10 +624,11 @@ interactive_mode() {
     echo "4. Expand physical volume only"
     echo "5. Expand logical volume and filesystem only"
     echo "6. Run complete expansion (all steps)"
-    echo "7. Exit"
+    echo "7. Custom logical volume expansion"
+    echo "8. Exit"
     echo ""
     
-    echo -n "Enter your choice (1-7): "
+    echo -n "Enter your choice (1-8): "
     read -r choice
     
     case "$choice" in
@@ -472,7 +670,8 @@ interactive_mode() {
                 run_complete_expansion
             fi
             ;;
-        7) echo "Exiting..."; exit 0 ;;
+        7) custom_lv_expansion ;;
+        8) echo "Exiting..."; exit 0 ;;
         *) echo -e "${RED}Invalid choice${NC}"; exit 1 ;;
     esac
 }
