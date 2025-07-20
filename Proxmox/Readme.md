@@ -1,87 +1,145 @@
 # Proxmox Automation Scripts
 
-This repository contains scripts to automatically fix common Proxmox issues including network connectivity problems and storage management.
+A comprehensive collection of scripts to automatically fix common Proxmox issues and perform system maintenance. This toolkit provides automated solutions for network connectivity problems, storage management, console access issues, filesystem expansion, and firmware management.
 
 ## Problems Solved
 
 1. **Network Connectivity**: Proxmox occasionally loses internet connectivity, requiring manual intervention to unplug and plug back in the ethernet cable
-2. **Storage Management**: Proxmox storage can fill up quickly with VM backups, logs, and other data, requiring analysis and cleanup
+2. **Storage Management**: Proxmox storage can fill up quickly with VM backups, logs, and other data, requiring analysis and cleanup  
 3. **Storage Configuration**: Proxmox storage display inconsistencies where summary page shows wrong capacity compared to actual disk size
+4. **Console Access**: Proxmox console 500 errors preventing VM/container console access through the web interface
+5. **Root Filesystem Expansion**: Expanding root filesystem after cloning to larger drives or upgrading storage
+6. **Firmware Management**: Scanning NVMe and HDD drives for current firmware versions and providing update guidance
 
-## Files
+## Scripts Overview
 
-### Network Management
-- `fix-network.sh` - Main script to restart network interface
-- `network-monitor.sh` - Continuous monitoring script (optional)
-- `network-fix.service` - Systemd service file for monitoring (optional)
+### Installation & Management
+- **`install.sh`** - Interactive installation script that downloads and installs all other scripts
+
+### Network Management  
+- **`fix-network.sh`** - Fixes network connectivity issues, handles hardware hangs (Intel e1000e support)
+- **`network-monitor.sh`** - Continuous network monitoring with automatic fixing
+- **`network-fix.service`** - Systemd service for automated monitoring
 
 ### Storage Management
-- `storage-analyzer.sh` - Comprehensive storage analysis and reporting
-- `storage-cleanup.sh` - Safe cleanup of common space consumers
-- `storage-config-fix.sh` - Diagnose and fix storage configuration issues
+- **`storage-analyzer.sh`** - Comprehensive storage analysis and reporting
+- **`storage-cleanup.sh`** - Interactive cleanup of logs, packages, VM backups, and temporary files
+- **`storage-config-fix.sh`** - Fix storage configuration discrepancies and expand LVM volumes
+- **`root-filesystem-expand.sh`** - Expand root filesystem after cloning to larger drives
+
+### System Management
+- **`console-fix.sh`** - Diagnose and fix Proxmox console 500 errors
+- **`firmware-scanner.sh`** - Scan drives for firmware versions and provide update guidance
+
+For detailed documentation on each script, see the individual README files:
+- [README-install.md](README-install.md) - Complete install.sh documentation
+- [README-fix-network.md](README-fix-network.md) - Network fixing script
+- [README-network-monitor.md](README-network-monitor.md) - Network monitoring
+- [README-storage-analyzer.md](README-storage-analyzer.md) - Storage analysis
+- [README-storage-cleanup.md](README-storage-cleanup.md) - Storage cleanup
+- [README-storage-config-fix.md](README-storage-config-fix.md) - Storage configuration fixes
+- [README-console-fix.md](README-console-fix.md) - Console troubleshooting
+- [README-root-filesystem-expand.md](README-root-filesystem-expand.md) - Root filesystem expansion
+- [README-firmware-scanner.md](README-firmware-scanner.md) - Firmware scanning and updates
 
 ## Quick Start
 
-1. **Interactive install (Recommended):**
-   ```bash
-   # Download and run the interactive installation script
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/install.sh
-   chmod +x install.sh
-   sudo ./install.sh
-   ```
-   
-   This will show an interactive menu with options to:
-   - Download and install all Proxmox tools (network + storage)
-   - Download scripts only
-   - Uninstall existing tools
-   - Test current installation
+### Method 1: Interactive Installation (Recommended)
 
-2. **Manual setup (Alternative):**
-   ```bash
-   # Download individual scripts
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/fix-network.sh
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/storage-analyzer.sh
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/storage-cleanup.sh
-   wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/storage-config-fix.sh
-   
-   # Make scripts executable
-   chmod +x *.sh
-   
-   # Move to system location (optional)
-   sudo mv fix-network.sh /usr/local/bin/fix-network
-   sudo mv storage-analyzer.sh /usr/local/bin/storage-analyzer
-   sudo mv storage-cleanup.sh /usr/local/bin/storage-cleanup
-   sudo mv storage-config-fix.sh /usr/local/bin/storage-config-fix
-   ```
+Download and run the interactive installation script:
 
-3. **Usage:**
-   ```bash
-   # Network fixes
-   sudo fix-network               # Auto-detect primary interface
-   sudo fix-network eth0          # Specify interface
-   
-   # Storage management
-   sudo storage-analyzer          # Analyze storage usage
-   sudo storage-cleanup           # Interactive cleanup
-   sudo storage-cleanup all       # Clean all categories
-   sudo storage-config-fix        # Fix storage configuration issues
-   ```
+```bash
+# Download the installer
+wget https://raw.githubusercontent.com/TrueBankai416/Scripts/refs/heads/main/Proxmox/install.sh
+chmod +x install.sh
 
-## Features
+# Run interactive installation
+sudo ./install.sh
+```
 
-- **Auto-detection**: Automatically finds the primary network interface
-- **Bridge support**: Special handling for Proxmox bridge interfaces (vmbr0, etc.)
-- **Physical interface restart**: For bridges, also restarts underlying physical interfaces
-- **Hardware hang detection**: Detects and handles Intel e1000e controller hangs from kernel logs
-- **Hardware-level reset**: Module reload and PCI reset for hardware hangs (e1000e, etc.)
-- **Driver-aware resets**: Different reset strategies based on network controller driver
-- **Connectivity checking**: Tests network before and after restart with multiple targets
-- **Retry logic**: Attempts multiple times if first try fails
-- **DHCP renewal**: Automatically attempts DHCP lease renewal
-- **Extended diagnostics**: Comprehensive logging and troubleshooting information
-- **Logging**: Comprehensive logging to `/var/log/network-fix.log`
-- **Safe operation**: Checks for root privileges and interface existence
-- **Interactive mode**: Prompts before restarting if network appears working
+The interactive installer will present you with options to:
+1. **Download and install all Proxmox tools** (network + storage + console + root expansion + firmware)
+2. **Download and install specific tool categories** (network only, storage only, etc.)
+3. **Download scripts only** (no system installation)
+4. **Check for script updates**
+5. **Uninstall existing tools**
+6. **Test current installation**
+
+### Method 2: Command Line Installation
+
+```bash
+# Install all tools
+sudo ./install.sh install
+
+# Install specific categories
+sudo ./install.sh install-network    # Network tools only
+sudo ./install.sh install-storage    # Storage tools only  
+sudo ./install.sh install-console    # Console tools only
+sudo ./install.sh install-root       # Root expansion only
+
+# Other operations
+sudo ./install.sh uninstall          # Remove all tools
+sudo ./install.sh test               # Test installation
+./install.sh download                # Download scripts only
+./install.sh check-updates           # Check for updates
+./install.sh help                    # Show help
+```
+
+### Method 3: Direct Script Usage
+
+After installation, use the tools directly:
+
+```bash
+# Network management
+sudo fix-network                     # Auto-detect and fix primary interface
+sudo fix-network eth0                # Fix specific interface
+sudo network-monitor                 # Start continuous monitoring
+
+# Storage management  
+sudo storage-analyzer                # Analyze storage usage
+sudo storage-cleanup                 # Interactive cleanup
+sudo storage-config-fix              # Fix configuration issues
+sudo root-filesystem-expand          # Expand root filesystem
+
+# System management
+sudo console-fix                     # Fix console 500 errors
+sudo firmware-scanner                # Scan drive firmware
+```
+
+## Key Features
+
+### Installation & Management
+- **Interactive installer** with menu-driven interface
+- **Automatic dependency detection** and installation
+- **Update checking** with version comparison
+- **Selective installation** by tool category
+- **Safe uninstallation** with cleanup
+- **Installation testing** and validation
+
+### Network Management
+- **Auto-detection** of primary network interfaces
+- **Bridge support** for Proxmox bridge interfaces (vmbr0, etc.)  
+- **Hardware hang detection** for Intel e1000e controllers
+- **Hardware-level reset** with module reload and PCI reset
+- **Driver-aware resets** with different strategies per controller type
+- **Continuous monitoring** with automatic fixing
+- **Comprehensive logging** and diagnostics
+
+### Storage Management  
+- **Storage analysis** with detailed usage reporting
+- **Interactive cleanup** with safety confirmations
+- **LVM expansion** including thin pool support
+- **Configuration fixing** for storage discrepancies
+- **Root filesystem expansion** after disk upgrades
+- **VM backup management** with age-based cleanup
+
+### System Management
+- **Console troubleshooting** for 500 errors
+- **SSL certificate management** and regeneration
+- **Service health checking** and repair
+- **Firmware scanning** for NVMe and SATA drives
+- **Manufacturer-specific** update guidance
+- **Security and performance** update prioritization
 
 ## Usage Options
 
@@ -96,6 +154,12 @@ sudo ./fix-network.sh eth0
 
 # Show help
 ./fix-network.sh --help
+
+# Root filesystem expansion
+sudo ./root-filesystem-expand.sh
+
+# Firmware scanning
+sudo ./firmware-scanner.sh
 ```
 
 ### Installation Options
@@ -117,9 +181,9 @@ sudo ./install.sh test       # Test installation
 ```
 
 **Interactive Menu Options:**
-1. Download and install network fix tools (includes automation setup)
+1. Download and install all Proxmox tools (includes network, storage, console, root expansion, and firmware scanning)
 2. Download scripts only (no installation)
-3. Uninstall network fix tools
+3. Uninstall Proxmox tools
 4. Test current installation
 5. Exit
 
@@ -128,30 +192,6 @@ After installation, the script will ask if you want to setup automatic monitorin
 - **Systemd Service**: Continuous monitoring (recommended)
 - **Cron Job**: Periodic checks every 5 minutes
 - **Skip**: Manual setup later
-
-### Automated Monitoring
-
-**Automatic Setup (Recommended):**
-The interactive installer will ask if you want to setup monitoring and help you choose between:
-
-**Option 1: Systemd Service (Continuous Monitoring)**
-```bash
-# Automatically configured during installation, or manually:
-sudo systemctl enable network-fix.service
-sudo systemctl start network-fix.service
-sudo systemctl status network-fix.service
-sudo journalctl -u network-fix.service -f
-```
-
-**Option 2: Cron Job (Periodic Checks)**
-```bash
-# Automatically configured during installation, or manually:
-sudo crontab -e
-# Add: */5 * * * * /usr/local/bin/network-monitor check >/dev/null 2>&1
-```
-
-**Manual Setup:**
-If you skipped automation during installation, you can set it up later using the commands above.
 
 ## Configuration
 
@@ -171,156 +211,67 @@ You can modify these variables at the top of storage-analyzer.sh, storage-cleanu
 - `REPORT_FILE`: Location of analysis report (default: `/tmp/storage-report.txt`)
 - `BACKUP_DIR`: Directory for cleanup backups (default: `/var/backups/storage-cleanup`)
 
-## Log Analysis
+### Root Filesystem Expansion
+You can modify these variables at the top of root-filesystem-expand.sh:
 
-View recent network fix attempts:
-```bash
-sudo tail -f /var/log/network-fix.log
-```
+- `LOG_FILE`: Location of log file (default: `/var/log/root-filesystem-expand.log`)
 
-Check for patterns:
-```bash
-sudo grep "ERROR" /var/log/network-fix.log
-sudo grep "Network connectivity restored" /var/log/network-fix.log
-```
+### Firmware Scanner
+You can modify these variables at the top of firmware-scanner.sh:
 
-## Common Network Interfaces
+- `LOG_FILE`: Location of log file (default: `/var/log/firmware-scanner.log`)
+- `REPORT_FILE`: Location of analysis report (default: `/tmp/firmware-report.txt`)
 
-- `eth0`, `eth1` - Traditional Ethernet interfaces
-- `enp0s3`, `enp0s8` - Modern predictable network interface names
-- `vmbr0`, `vmbr1` - Proxmox bridge interfaces (most common)
+## Documentation
 
-### Proxmox Bridge Interfaces
+For detailed usage instructions for individual scripts:
 
-Proxmox uses bridge interfaces (typically `vmbr0`) that combine physical interfaces with virtual ones for VMs. The script automatically detects bridge interfaces and:
+- **Network Tools**: See inline help with `./fix-network.sh --help`
+- **Storage Tools**: See inline help and comprehensive logging
+- **Console Tools**: See inline help with `./console-fix.sh --help`  
+- **Root Expansion**: See [README-root-filesystem-expand.md](README-root-filesystem-expand.md) for detailed usage guide
+- **Firmware Scanner**: See inline help with `./firmware-scanner.sh --help`
 
-1. **Identifies bridge members**: Finds physical interfaces attached to the bridge
-2. **Restarts physical interfaces first**: Restarts underlying hardware interfaces
-3. **Restarts bridge interface**: Then restarts the bridge itself  
-4. **Extended wait times**: Allows extra time for bridge stabilization
-5. **DHCP renewal**: Attempts to renew DHCP leases
-6. **Enhanced diagnostics**: Provides detailed troubleshooting info
+## Common Issues Resolved
 
-To see bridge configuration:
-```bash
-# List all interfaces
-ip link show
+### Network Issues
+- Network connectivity loss requiring cable replug
+- Intel e1000e hardware hangs
+- Bridge interface problems
+- DHCP renewal failures
 
-# Show bridge members
-ls /sys/class/net/vmbr0/brif/
+### Storage Issues
+1. **Storage display discrepancies** - Fixes cases where Proxmox shows incorrect storage capacity
+2. **Unallocated disk space** - Expands physical volumes and logical volumes to use full disk
+3. **Thin pool expansion** - Automatically expands thin pools when space is available
+4. **Root filesystem expansion** - Expands root filesystem after cloning to larger drive with custom sizing
+5. **Full root filesystem** - Identifies what's consuming space in root partition
+6. **LVM thin pool full** - Analyzes thin pool usage and suggests cleanup
 
-# Check bridge status
-brctl show
+### Console Issues
+1. **Console 500 errors** - Fixes internal server errors preventing console access
+2. **Proxmox service issues** - Diagnoses and restarts failed web services
+3. **SSL certificate problems** - Detects expired or corrupted certificates
+4. **Service dependency failures** - Ensures all required services are running
 
-# View network configuration
-cat /etc/network/interfaces
-```
-
-### Hardware Hang Detection
-
-The script automatically detects and handles hardware-level network controller issues, particularly common with Intel e1000e controllers:
-
-**What it detects:**
-- "Hardware Unit Hang" messages in kernel logs (`dmesg` or `journalctl`)
-- Intel e1000e controller lockups (common in Proxmox systems)
-- Link down/up cycles due to hardware issues
-
-**Hardware reset methods:**
-1. **ethtool reset**: Hardware-level interface reset
-2. **Feature cycling**: Disable/enable RX/TX to clear buffers  
-3. **Module reload**: For e1000e, completely reload the driver module
-4. **Proxmox workaround**: Disable problematic features (gso, gro, tso, etc.)
-5. **Persistent configuration**: Create systemd service for permanent feature settings
-6. **PCI reset**: Direct PCI bus reset for the network controller
-
-**When hardware reset is used:**
-- Kernel logs show "Detected Hardware Unit Hang" messages
-- Interface uses Intel e1000e driver (proactive reset)
-- Standard software reset fails multiple times
-
-**Multi-layered approach:**
-- **Step 1**: ethtool hardware reset
-- **Step 2**: Driver module reload (for e1000e)
-- **Step 3**: Apply Proxmox community workaround (disable problematic features)
-- **Step 4**: Generic PCI reset (for other drivers)
-- **Step 5**: Create persistent configuration to prevent future issues
-
-**Persistent Configuration:**
-The script automatically creates systemd services to apply ethtool workarounds persistently:
-- Service files: `/etc/systemd/system/ethtool-workaround-<interface>.service`
-- Applied on every boot to prevent recurring hardware hangs
-- Based on successful community solutions from Proxmox forums
-
-To check for hardware hangs:
-```bash
-# Check recent kernel messages for hangs
-dmesg -T | grep -i "hardware unit hang"
-
-# Check system logs
-journalctl --since="10 minutes ago" | grep -i "hardware unit hang"
-
-# Check interface driver
-ls -l /sys/class/net/*/device/driver
-
-# Check if workaround service exists
-systemctl status ethtool-workaround-eno2.service
-
-# View current ethtool features
-ethtool -k eno2 | grep -E "(gso|gro|tso|tx|rx|rxvlan|txvlan|sg):"
-```
-
-## Troubleshooting
-
-1. **Script fails with permission error:**
-   - Make sure you run with `sudo`
-   - Check file permissions: `chmod +x fix-network.sh`
-
-2. **Network still doesn't work after restart:**
-   - Check physical connections
-   - Verify network configuration: `cat /etc/network/interfaces`
-   - Check system logs: `journalctl -u networking`
-
-3. **Can't determine primary interface:**
-   - Manually specify interface: `sudo ./fix-network.sh eth0`
-   - List interfaces: `ip link show`
-
-4. **Script runs but network still broken:**
-   - Check if DHCP is working: `dhclient -v`
-   - Verify DNS: `nslookup google.com`
-   - Check routing: `ip route show`
-
-## Safety Notes
-
-- The script requires root privileges to restart network interfaces
-- It will briefly disconnect network connectivity while restarting
-- Always test in a non-production environment first
-- Keep physical access to the server in case of issues
-
-## Common Storage Issues Resolved
-
-The storage scripts help resolve these common Proxmox storage problems:
-
-1. **Full root filesystem** - Identifies what's consuming space
-2. **LVM thin pool full** - Analyzes thin pool usage and suggests cleanup
-3. **Large log files** - Finds and helps clean oversized logs
-4. **Old VM backups** - Identifies and removes outdated backups
-5. **Package cache buildup** - Cleans APT cache and orphaned packages
-6. **Temporary file accumulation** - Safely removes old temporary files
-7. **Duplicate files** - Finds and helps remove duplicate backups/files
-8. **Storage display inconsistencies** - Fixes cases where summary page shows wrong capacity
-9. **Unallocated disk space** - Expands physical volumes and logical volumes to use full disk capacity
-10. **Thin pool configuration** - Optimizes thin pool settings and utilization
+### Firmware Issues
+1. **Outdated firmware** - Identifies current firmware versions and available updates
+2. **Security vulnerabilities** - Highlights firmware updates that fix security issues
+3. **Performance problems** - Identifies firmware updates that improve drive performance
+4. **Compatibility issues** - Provides manufacturer-specific update guidance
 
 ## Best Practices
 
 1. **Regular monitoring** - Set up automated network monitoring
 2. **Storage maintenance** - Run storage analysis monthly
-3. **Backup before cleanup** - Always backup important data first
-4. **Test in non-production** - Validate scripts in test environment
-5. **Monitor thin pools** - Watch data_percent and metadata_percent
-6. **Log rotation** - Ensure proper log rotation is configured
-7. **Storage configuration** - Verify storage capacity after hardware changes
-8. **Disk expansion** - Use storage-config-fix after adding disk space
+3. **Storage configuration** - Fix storage discrepancies when they occur
+4. **Console health checks** - Run console diagnostics after system updates
+5. **Backup before expansion** - Always backup important data before expanding filesystems
+6. **Test in non-production** - Validate scripts in test environment
+7. **Plan expansions** - Use the expansion opportunity checker before making changes
+8. **Firmware monitoring** - Run firmware scans quarterly to check for updates
+9. **Update planning** - Schedule firmware updates during maintenance windows
+10. **Update verification** - Always verify system stability after firmware updates
 
 ## License
 
