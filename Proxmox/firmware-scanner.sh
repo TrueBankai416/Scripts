@@ -65,6 +65,11 @@ check_required_tools() {
         echo -e "${YELLOW}Installing missing tools...${NC}"
         apt update -qq
         apt install -y smartmontools nvme-cli hdparm lshw dmidecode
+        
+        # Also install Samsung ISO decryption tools for complete functionality
+        echo "Installing Samsung ISO decryption tools..."
+        apt install -y p7zip-full openssl xxd binutils
+        echo -e "${GREEN}✓ Samsung ISO decryption tools installed${NC}"
     fi
     
     echo ""
@@ -880,20 +885,1232 @@ update_generic_drive() {
     echo "4. Consider bootable update media if available"
 }
 
-# Placeholder functions for Samsung methods
+# Samsung Magician / DC Toolkit update function
 samsung_magician_update() {
     local device="$1"
     local model="$2"
     
-    echo -e "${BLUE}Samsung Magician Update${NC}"
+    echo -e "${BLUE}Samsung DC Toolkit / Magician Update${NC}"
     echo ""
-    echo "Samsung Magician for Linux (if available):"
-    echo "1. Check Samsung's website for Linux version"
-    echo "2. Install Samsung Magician"
-    echo "3. Run firmware update through the GUI"
+    echo "Samsung DC Toolkit is the recommended tool for Samsung NVMe firmware updates."
+    echo "This will search for and download the latest version from Samsung's website."
     echo ""
-    echo "Note: Samsung Magician may not be available for all Linux distributions."
-    echo "Consider using nvme-cli method or bootable media instead."
+    
+    if confirm_action "Proceed with DC Toolkit and firmware search and download?"; then
+        search_and_download_samsung_complete "$device" "$model"
+    else
+        echo "DC Toolkit search cancelled. Use other methods or manual download."
+        samsung_download_links "$model"
+    fi
+}
+
+# Function to search and download both DC Toolkit and firmware
+search_and_download_samsung_complete() {
+    local device="$1"
+    local model="$2"
+    
+    echo -e "${CYAN}Samsung Complete Update Package Search${NC}"
+    echo ""
+    echo "This will search for and download both:"
+    echo "1. Samsung DC Toolkit (update tool) - automatically made executable"
+    echo "2. Latest firmware for your $model - including ISO decryption if needed"
+    echo ""
+    
+    # Check for ISO decryption tools early
+    check_iso_decryption_tools
+    echo ""
+    
+    local base_url="https://semiconductor.samsung.com/consumer-storage/support/tools/"
+    local temp_dir="/tmp/samsung_complete_$$"
+    
+    mkdir -p "$temp_dir"
+    cd "$temp_dir" || exit 1
+    
+    echo "Step 1: Searching for DC Toolkit and firmware..."
+    log_message "INFO" "Starting complete Samsung update package search for $model"
+    
+    # Search for both DC Toolkit and firmware simultaneously
+    search_dc_toolkit_and_firmware "$device" "$model" "$base_url" "$temp_dir"
+    
+    # Cleanup
+    cd - >/dev/null 2>&1
+    # Don't remove temp_dir yet as it contains downloaded files
+}
+
+# Function to search for both DC Toolkit and model-specific firmware
+search_dc_toolkit_and_firmware() {
+    local device="$1"
+    local model="$2"
+    local base_url="$3"
+    local temp_dir="$4"
+    
+    echo "Downloading Samsung tools and firmware pages..."
+    
+    # Download main tools page
+    local tools_page="$temp_dir/tools_page.html"
+    local toolkit_found=false
+    local firmware_found=false
+    
+    if curl -L -s -o "$tools_page" "$base_url" 2>/dev/null; then
+        echo -e "${GREEN}✓ Downloaded tools page${NC}"
+        
+        # Search for DC Toolkit
+        echo "Step 2a: Searching for DC Toolkit..."
+        search_for_dc_toolkit "$tools_page" "$device" "$model" "$temp_dir"
+        toolkit_found=$?
+        
+        # Search for firmware
+        echo "Step 2b: Searching for model-specific firmware..."  
+        search_for_firmware "$tools_page" "$device" "$model" "$temp_dir"
+        firmware_found=$?
+        
+        # Also try firmware-specific URL patterns
+        search_firmware_additional_sources "$device" "$model" "$temp_dir"
+        
+    else
+        echo -e "${RED}✗ Could not access Samsung tools page${NC}"
+        manual_complete_download "$device" "$model"
+        return 1
+    fi
+    
+    # Process results
+    if [[ $toolkit_found -eq 0 || $firmware_found -eq 0 ]]; then
+        echo ""
+        echo "=== Download Summary ==="
+        [[ $toolkit_found -eq 0 ]] && echo -e "${GREEN}✓ DC Toolkit: Found and downloaded${NC}"
+        [[ $toolkit_found -ne 0 ]] && echo -e "${YELLOW}⚠ DC Toolkit: Not found automatically${NC}"
+        [[ $firmware_found -eq 0 ]] && echo -e "${GREEN}✓ Firmware: Found and downloaded${NC}"
+        [[ $firmware_found -ne 0 ]] && echo -e "${YELLOW}⚠ Firmware: Not found automatically${NC}"
+        echo ""
+        
+        prepare_samsung_update_package "$device" "$model" "$temp_dir"
+    else
+        echo -e "${YELLOW}Neither DC Toolkit nor firmware found automatically${NC}"
+        manual_complete_download "$device" "$model"
+    fi
+}
+
+# Function to search for DC Toolkit specifically
+search_for_dc_toolkit() {
+    local tools_page="$1"
+    local device="$2"
+    local model="$3"
+    local temp_dir="$4"
+    
+    # DC Toolkit search patterns
+    local dc_toolkit_patterns=(
+        "DC.*[Tt]oolkit.*Linux"
+        "DC.*[Tt]oolkit.*linux"
+        "dcToolkit.*linux"
+        "Samsung.*DC.*Toolkit"
+        "magician.*linux"
+        "nvme.*tool.*linux"
+        "firmware.*update.*tool"
+    )
+    
+    local found_links=()
+    for pattern in "${dc_toolkit_patterns[@]}"; do
+        local links=$(grep -io 'href="[^"]*"[^>]*'"$pattern" "$tools_page" 2>/dev/null | sed 's/href="//;s/".*//' | head -3)
+        if [[ -n "$links" ]]; then
+            while IFS= read -r link; do
+                [[ -n "$link" ]] && found_links+=("$link")
+            done <<< "$links"
+        fi
+    done
+    
+    if [[ ${#found_links[@]} -gt 0 ]]; then
+        echo -e "${GREEN}Found DC Toolkit download links:${NC}"
+        for link in "${found_links[@]}"; do
+            # Make sure link is absolute
+            if [[ "$link" =~ ^/ ]]; then
+                link="https://semiconductor.samsung.com$link"
+            elif [[ ! "$link" =~ ^https?:// ]]; then
+                link="https://semiconductor.samsung.com/consumer-storage/support/tools/$link"
+            fi
+            echo "  • $link"
+        done
+        
+        # Download the first promising link
+        local download_link="${found_links[0]}"
+        if [[ "$download_link" =~ ^/ ]]; then
+            download_link="https://semiconductor.samsung.com$download_link"
+        elif [[ ! "$download_link" =~ ^https?:// ]]; then
+            download_link="https://semiconductor.samsung.com/consumer-storage/support/tools/$download_link"
+        fi
+        
+        download_dc_toolkit_file "$download_link" "$temp_dir"
+        return $?
+    else
+        echo -e "${YELLOW}No DC Toolkit links found in tools page${NC}"
+        return 1
+    fi
+}
+
+# Function to search for model-specific firmware
+search_for_firmware() {
+    local tools_page="$1"
+    local device="$2"
+    local model="$3"
+    local temp_dir="$4"
+    
+    # Extract model number/series for firmware search
+    local model_clean=$(echo "$model" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9]//g')
+    local model_series=""
+    
+    # Identify Samsung series
+    if [[ "$model" =~ 990.*PRO ]]; then
+        model_series="990PRO"
+    elif [[ "$model" =~ 980.*PRO ]]; then
+        model_series="980PRO" 
+    elif [[ "$model" =~ 970.*PRO ]]; then
+        model_series="970PRO"
+    elif [[ "$model" =~ 970.*EVO ]]; then
+        model_series="970EVO"
+    elif [[ "$model" =~ 980 ]]; then
+        model_series="980"
+    elif [[ "$model" =~ 990 ]]; then
+        model_series="990"
+    fi
+    
+    echo "Searching firmware for model: $model (series: $model_series)"
+    log_message "INFO" "Searching firmware for Samsung model: $model, series: $model_series"
+    
+    # Firmware search patterns
+    local firmware_patterns=(
+        "$model_series.*firmware"
+        "$model_series.*update"
+        "firmware.*$model_series"  
+        "$model_clean.*firmware"
+        "$model_clean.*update"
+        "990.*PRO.*firmware"
+        "980.*PRO.*firmware"
+        "970.*firmware"
+    )
+    
+    local firmware_links=()
+    for pattern in "${firmware_patterns[@]}"; do
+        local links=$(grep -io 'href="[^"]*"[^>]*'"$pattern" "$tools_page" 2>/dev/null | sed 's/href="//;s/".*//' | head -5)
+        if [[ -n "$links" ]]; then
+            while IFS= read -r link; do
+                [[ -n "$link" ]] && firmware_links+=("$link")
+            done <<< "$links"
+        fi
+    done
+    
+    if [[ ${#firmware_links[@]} -gt 0 ]]; then
+        echo -e "${GREEN}Found potential firmware downloads:${NC}"
+        for link in "${firmware_links[@]}"; do
+            # Make sure link is absolute
+            if [[ "$link" =~ ^/ ]]; then
+                link="https://semiconductor.samsung.com$link"
+            elif [[ ! "$link" =~ ^https?:// ]]; then
+                link="https://semiconductor.samsung.com/consumer-storage/support/tools/$link"
+            fi
+            echo "  • $link"
+        done
+        
+        # Download the most promising firmware link
+        local firmware_link="${firmware_links[0]}"
+        if [[ "$firmware_link" =~ ^/ ]]; then
+            firmware_link="https://semiconductor.samsung.com$firmware_link"
+        elif [[ ! "$firmware_link" =~ ^https?:// ]]; then
+            firmware_link="https://semiconductor.samsung.com/consumer-storage/support/tools/$firmware_link"
+        fi
+        
+        download_firmware_file "$firmware_link" "$model_series" "$temp_dir"
+        return $?
+    else
+        echo -e "${YELLOW}No firmware links found for $model in tools page${NC}"
+        return 1
+    fi
+}
+
+# Function to search additional firmware sources
+search_firmware_additional_sources() {
+    local device="$1"
+    local model="$2"
+    local temp_dir="$3"
+    
+    echo "Step 2c: Checking additional firmware sources..."
+    
+    # Try common Samsung firmware URL patterns
+    local additional_urls=(
+        "https://semiconductor.samsung.com/consumer-storage/support/downloads/"
+        "https://semiconductor.samsung.com/consumer-storage/support/firmware/"
+        "https://semiconductor.samsung.com/consumer-storage/ssd/firmware/"
+    )
+    
+    for url in "${additional_urls[@]}"; do
+        echo "Checking: $url"
+        local page_file="$temp_dir/additional_$(basename "$url").html"
+        
+        if curl -L -s -o "$page_file" "$url" 2>/dev/null; then
+            search_for_firmware "$page_file" "$device" "$model" "$temp_dir"
+            if [[ $? -eq 0 ]]; then
+                echo -e "${GREEN}✓ Found firmware in additional source${NC}"
+                return 0
+            fi
+        fi
+    done
+    
+    echo -e "${YELLOW}No firmware found in additional sources${NC}"
+    return 1
+}
+
+# Function to download DC Toolkit file
+download_dc_toolkit_file() {
+    local download_url="$1"
+    local temp_dir="$2"
+    
+    echo "Downloading DC Toolkit from: $download_url"
+    
+    local filename=$(basename "$download_url")
+    [[ -z "$filename" || "$filename" == "/" ]] && filename="samsung_dc_toolkit.tar.gz"
+    local toolkit_file="$temp_dir/$filename"
+    
+    if curl -L -o "$toolkit_file" "$download_url" 2>/dev/null; then
+        local file_size=$(stat -c%s "$toolkit_file" 2>/dev/null || echo "0")
+        
+        if [[ $file_size -gt 1024 ]]; then
+            echo -e "${GREEN}✓ Downloaded DC Toolkit: $filename ($file_size bytes)${NC}"
+            log_message "INFO" "Successfully downloaded Samsung DC Toolkit: $filename"
+            
+            # Make executable if it's a direct executable
+            if file "$toolkit_file" | grep -q "executable"; then
+                chmod +x "$toolkit_file"
+                echo -e "${GREEN}✓ Made DC Toolkit executable${NC}"
+            fi
+            
+            return 0
+        else
+            echo -e "${RED}✗ Downloaded toolkit file is too small${NC}"
+            return 1
+        fi
+    else
+        echo -e "${RED}✗ DC Toolkit download failed${NC}"
+        return 1
+    fi
+}
+
+# Function to download firmware file
+download_firmware_file() {
+    local download_url="$1"
+    local model_series="$2"
+    local temp_dir="$3"
+    
+    echo "Downloading firmware from: $download_url"
+    
+    local filename=$(basename "$download_url")
+    [[ -z "$filename" || "$filename" == "/" ]] && filename="samsung_${model_series}_firmware.bin"
+    local firmware_file="$temp_dir/$filename"
+    
+    if curl -L -o "$firmware_file" "$download_url" 2>/dev/null; then
+        local file_size=$(stat -c%s "$firmware_file" 2>/dev/null || echo "0")
+        
+        if [[ $file_size -gt 1024 ]]; then
+            echo -e "${GREEN}✓ Downloaded firmware: $filename ($file_size bytes)${NC}"
+            log_message "INFO" "Successfully downloaded Samsung firmware: $filename for $model_series"
+            
+            # Check if it's a Samsung ISO that needs decryption
+            if [[ "$filename" =~ \.iso$ ]] || file "$firmware_file" | grep -qi "iso.*9660"; then
+                echo "Step 2c: Detected Samsung firmware ISO - attempting decryption..."
+                decrypt_samsung_iso "$firmware_file" "$temp_dir" "$model_series"
+                local decrypt_result=$?
+                
+                if [[ $decrypt_result -eq 0 ]]; then
+                    echo -e "${GREEN}✓ Samsung ISO decrypted and .bin files extracted${NC}"
+                else
+                    echo -e "${YELLOW}⚠ ISO decryption failed or not needed - continuing with original file${NC}"
+                fi
+            fi
+            
+            return 0
+        else
+            echo -e "${RED}✗ Downloaded firmware file is too small${NC}"
+            return 1
+        fi
+    else
+        echo -e "${RED}✗ Firmware download failed${NC}"
+        return 1
+    fi
+}
+
+# Function to decrypt Samsung firmware ISO and extract .bin files
+decrypt_samsung_iso() {
+    local iso_file="$1"
+    local temp_dir="$2"
+    local model_series="$3"
+    
+    echo "Samsung ISO Decryption Process"
+    echo "ISO file: $(basename "$iso_file")"
+    
+    # Check for required tools
+    local missing_tools=()
+    if ! command -v 7z &> /dev/null; then
+        missing_tools+=("7z (p7zip-full)")
+    fi
+    if ! command -v openssl &> /dev/null; then
+        missing_tools+=("openssl")
+    fi
+    if ! command -v xxd &> /dev/null; then
+        missing_tools+=("xxd")
+    fi
+    if ! command -v strings &> /dev/null; then
+        missing_tools+=("strings (binutils)")
+    fi
+    
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}Missing required tools for Samsung ISO decryption:${NC}"
+        for tool in "${missing_tools[@]}"; do
+            echo "  • $tool"
+        done
+        echo ""
+        echo "Install missing tools:"
+        echo "  Ubuntu/Debian: sudo apt install p7zip-full openssl xxd binutils"
+        echo "  CentOS/RHEL: sudo yum install p7zip openssl xxd binutils"
+        echo ""
+        echo "Skipping ISO decryption - firmware will remain as ISO file"
+        return 1
+    fi
+    
+    local iso_work_dir="$temp_dir/samsung_iso_work_$$"
+    mkdir -p "$iso_work_dir"
+    cd "$iso_work_dir" || return 1
+    
+    echo "Step 1: Extracting Samsung ISO..."
+    log_message "INFO" "Starting Samsung ISO decryption for $(basename "$iso_file")"
+    
+    # Extract the ISO
+    if ! 7z x -y -otmp "$iso_file" >/dev/null 2>&1; then
+        echo -e "${RED}✗ Failed to extract ISO file${NC}"
+        cleanup_iso_work "$iso_work_dir"
+        return 1
+    fi
+    echo -e "${GREEN}✓ ISO extracted${NC}"
+    
+    # Extract initrd
+    echo "Step 2: Extracting initrd..."
+    if [[ -f "tmp/initrd" ]]; then
+        if ! 7z x -y -otmp/ tmp/initrd >/dev/null 2>&1; then
+            echo -e "${RED}✗ Failed to extract initrd${NC}"
+            cleanup_iso_work "$iso_work_dir"
+            return 1
+        fi
+        echo -e "${GREEN}✓ initrd extracted${NC}"
+    else
+        echo -e "${RED}✗ initrd not found in ISO${NC}"
+        cleanup_iso_work "$iso_work_dir"
+        return 1
+    fi
+    
+    # Extract fumagician
+    echo "Step 3: Extracting fumagician..."
+    if [[ -f "tmp/initrd~" ]]; then
+        if ! 7z x -y -otmp/ tmp/initrd~ root/fumagician >/dev/null 2>&1; then
+            echo -e "${RED}✗ Failed to extract fumagician${NC}"
+            cleanup_iso_work "$iso_work_dir"
+            return 1
+        fi
+        echo -e "${GREEN}✓ fumagician extracted${NC}"
+    else
+        echo -e "${RED}✗ initrd~ not found${NC}"
+        cleanup_iso_work "$iso_work_dir"
+        return 1
+    fi
+    
+    # Extract decryption key
+    echo "Step 4: Extracting decryption key..."
+    local fumagician_binary="tmp/root/fumagician/fumagician"
+    
+    if [[ ! -f "$fumagician_binary" ]]; then
+        echo -e "${RED}✗ fumagician binary not found${NC}"
+        cleanup_iso_work "$iso_work_dir"
+        return 1
+    fi
+    
+    # Get the key using the same method as the reference script
+    local key_raw=$(strings "$fumagician_binary" | grep -A 2 printk | tail -1 | base64 -d 2>/dev/null | xxd -p -c 100 2>/dev/null)
+    
+    if [[ -z "$key_raw" ]]; then
+        echo -e "${RED}✗ Failed to extract decryption key from fumagician${NC}"
+        cleanup_iso_work "$iso_work_dir"
+        return 1
+    fi
+    
+    echo -e "${GREEN}✓ Decryption key extracted${NC}"
+    log_message "INFO" "Samsung decryption key extracted successfully"
+    
+    # Decrypt .enc files
+    echo "Step 5: Decrypting firmware files..."
+    local decrypted_count=0
+    local bin_files=()
+    
+    for enc_file in tmp/root/fumagician/*.enc; do
+        if [[ -f "$enc_file" ]]; then
+            local base_name=$(basename "${enc_file%.enc}")
+            local bin_file="$temp_dir/${base_name}.bin"
+            local magic_file="$temp_dir/${base_name}.magic"
+            
+            echo "Decrypting: $base_name.enc"
+            
+            # Decrypt main firmware data (skip first 32 bytes, decrypt with AES-256-ECB)
+            if dd if="$enc_file" bs=32 skip=1 status=none 2>/dev/null | \
+               openssl enc -aes-256-ecb -d -out "$bin_file" -nopad -K "$key_raw" 2>/dev/null; then
+                
+                # Also decrypt the magic/header (first 32 bytes)
+                dd if="$enc_file" bs=32 count=1 status=none 2>/dev/null | \
+                   openssl enc -aes-256-ecb -d -out "$magic_file" -nopad -K "$key_raw" 2>/dev/null
+                
+                local bin_size=$(stat -c%s "$bin_file" 2>/dev/null || echo "0")
+                if [[ $bin_size -gt 0 ]]; then
+                    echo -e "  ${GREEN}✓ $base_name.bin ($bin_size bytes)${NC}"
+                    bin_files+=("$bin_file")
+                    ((decrypted_count++))
+                    log_message "INFO" "Decrypted Samsung firmware: $base_name.bin"
+                else
+                    echo -e "  ${RED}✗ $base_name.bin (decryption failed)${NC}"
+                    rm -f "$bin_file" "$magic_file"
+                fi
+            else
+                echo -e "  ${RED}✗ Failed to decrypt $base_name.enc${NC}"
+            fi
+        fi
+    done
+    
+    # Cleanup temporary extraction files
+    cleanup_iso_work "$iso_work_dir"
+    
+    if [[ $decrypted_count -gt 0 ]]; then
+        echo ""
+        echo -e "${GREEN}Samsung ISO decryption completed successfully!${NC}"
+        echo "Decrypted $decrypted_count firmware file(s):"
+        for bin_file in "${bin_files[@]}"; do
+            echo "  • $(basename "$bin_file")"
+        done
+        echo ""
+        return 0
+    else
+        echo -e "${RED}✗ No firmware files were successfully decrypted${NC}"
+        return 1
+    fi
+}
+
+# Function to cleanup ISO extraction working directory
+cleanup_iso_work() {
+    local work_dir="$1"
+    cd / 2>/dev/null
+    rm -rf "$work_dir" 2>/dev/null
+}
+
+# Function to check for ISO decryption tools availability
+check_iso_decryption_tools() {
+    echo "Checking Samsung ISO decryption tools..."
+    
+    local missing_tools=()
+    local available_tools=()
+    
+    if command -v 7z &> /dev/null; then
+        available_tools+=("7z")
+    else
+        missing_tools+=("7z (p7zip-full)")
+    fi
+    
+    if command -v openssl &> /dev/null; then
+        available_tools+=("openssl")
+    else
+        missing_tools+=("openssl")
+    fi
+    
+    if command -v xxd &> /dev/null; then
+        available_tools+=("xxd")
+    else
+        missing_tools+=("xxd")
+    fi
+    
+    if command -v strings &> /dev/null; then
+        available_tools+=("strings")
+    else
+        missing_tools+=("strings (binutils)")
+    fi
+    
+    if [[ ${#available_tools[@]} -eq 4 ]]; then
+        echo -e "${GREEN}✓ All ISO decryption tools available: ${available_tools[*]}${NC}"
+        echo "Samsung firmware ISOs can be automatically decrypted and .bin files extracted"
+    else
+        echo -e "${YELLOW}⚠ Some ISO decryption tools missing: ${missing_tools[*]}${NC}"
+        echo "If Samsung firmware is downloaded as encrypted ISO, manual decryption will be needed"
+        echo ""
+        echo "Install missing tools:"
+        echo "  Ubuntu/Debian: sudo apt install p7zip-full openssl xxd binutils"
+        echo "  CentOS/RHEL: sudo yum install p7zip openssl xxd binutils"
+        echo "  Fedora: sudo dnf install p7zip openssl xxd binutils"
+    fi
+}
+
+# Function to prepare the complete Samsung update package
+prepare_samsung_update_package() {
+    local device="$1"
+    local model="$2"
+    local temp_dir="$3"
+    
+    echo ""
+    echo -e "${BLUE}=== Preparing Samsung Update Package ===${NC}"
+    echo ""
+    
+    # List downloaded files
+    echo "Downloaded files:"
+    ls -la "$temp_dir"/ | grep -v "^total\|^d" | while read -r line; do
+        echo "  $line"
+    done
+    echo ""
+    
+    # Find toolkit executable
+    local toolkit_exec=""
+    local firmware_file=""
+    
+    # Look for toolkit executables or archives
+    for file in "$temp_dir"/*; do
+        if [[ -f "$file" ]]; then
+            local basename_file=$(basename "$file")
+            
+            # Check if it's a toolkit
+            if [[ "$basename_file" =~ dc.*toolkit|magician|samsung.*tool ]] || file "$file" | grep -q "executable"; then
+                toolkit_exec="$file"
+                # Make sure it's executable
+                chmod +x "$file" 2>/dev/null
+                echo -e "${GREEN}✓ Found and made executable: $basename_file${NC}"
+            fi
+            
+            # Check if it's firmware (.bin, .rom, etc.)
+            if [[ "$basename_file" =~ \.bin$|\.rom$|\.fw$ ]] || [[ "$basename_file" =~ firmware ]]; then
+                firmware_file="$file"
+                echo -e "${GREEN}✓ Found firmware file: $basename_file${NC}"
+            fi
+        fi
+    done
+    
+    # Extract archives if needed
+    if [[ -z "$toolkit_exec" ]]; then
+        echo "No direct executable found, checking for archives to extract..."
+        extract_samsung_packages "$temp_dir"
+        
+        # Re-scan for executables after extraction
+        toolkit_exec=$(find "$temp_dir" -name "*toolkit*" -o -name "*magician*" -o -name "*samsung*" -executable 2>/dev/null | head -1)
+        if [[ -n "$toolkit_exec" ]]; then
+            chmod +x "$toolkit_exec"
+            echo -e "${GREEN}✓ Found and made executable after extraction: $(basename "$toolkit_exec")${NC}"
+        fi
+    fi
+    
+    # Re-scan for firmware files after extraction and ISO decryption
+    if [[ -z "$firmware_file" ]]; then
+        # Look for .bin files (including decrypted Samsung firmware)
+        firmware_file=$(find "$temp_dir" -name "*.bin" -o -name "*.rom" -o -name "*.fw" 2>/dev/null | head -1)
+        if [[ -n "$firmware_file" ]]; then
+            echo -e "${GREEN}✓ Found firmware file after extraction: $(basename "$firmware_file")${NC}"
+        else
+            # Also check for Samsung-specific decrypted files
+            firmware_file=$(find "$temp_dir" -name "*firmware*.bin" -o -name "*DSRD*.bin" -o -name "*990PRO*.bin" -o -name "*980PRO*.bin" 2>/dev/null | head -1)
+            [[ -n "$firmware_file" ]] && echo -e "${GREEN}✓ Found Samsung decrypted firmware: $(basename "$firmware_file")${NC}"
+        fi
+    fi
+    
+    echo ""
+    echo "=== Update Package Ready ==="
+    echo "Device: $device"
+    echo "Model: $model"
+    [[ -n "$toolkit_exec" ]] && echo "DC Toolkit: $(basename "$toolkit_exec")" || echo "DC Toolkit: Not found"
+    [[ -n "$firmware_file" ]] && echo "Firmware: $(basename "$firmware_file")" || echo "Firmware: Not found" 
+    echo "Location: $temp_dir"
+    echo ""
+    
+    # Offer to proceed with update
+    launch_complete_samsung_update "$device" "$model" "$toolkit_exec" "$firmware_file" "$temp_dir"
+}
+
+# Function to extract Samsung packages
+extract_samsung_packages() {
+    local temp_dir="$1"
+    
+    for file in "$temp_dir"/*; do
+        if [[ -f "$file" ]]; then
+            local basename_file=$(basename "$file")
+            
+            if [[ "$basename_file" =~ \.tar\.gz$|\.tgz$ ]]; then
+                echo "Extracting TAR.GZ: $basename_file"
+                tar -xzf "$file" -C "$temp_dir" 2>/dev/null && echo -e "${GREEN}✓ Extracted${NC}"
+            elif [[ "$basename_file" =~ \.zip$ ]] && command -v unzip &> /dev/null; then
+                echo "Extracting ZIP: $basename_file"
+                unzip -q "$file" -d "$temp_dir" 2>/dev/null && echo -e "${GREEN}✓ Extracted${NC}"
+            fi
+        fi
+    done
+}
+
+# Function to launch complete Samsung update
+launch_complete_samsung_update() {
+    local device="$1"
+    local model="$2"
+    local toolkit_exec="$3"
+    local firmware_file="$4"
+    local temp_dir="$5"
+    
+    if [[ -n "$toolkit_exec" && -n "$firmware_file" ]]; then
+        echo -e "${CYAN}Complete Samsung Update Package Ready!${NC}"
+        echo ""
+        echo "Both DC Toolkit and firmware are available:"
+        echo "• Toolkit: $(basename "$toolkit_exec")"
+        echo "• Firmware: $(basename "$firmware_file")"
+        echo ""
+        echo "Update options:"
+        echo "1. Launch DC Toolkit GUI (recommended)"
+        echo "2. Use nvme-cli with downloaded firmware"
+        echo "3. Manual instructions"
+        echo ""
+        echo -n "Select option (1-3): "
+        read -r choice
+        
+        case "$choice" in
+            1)
+                launch_dc_toolkit_with_firmware "$device" "$model" "$toolkit_exec" "$firmware_file"
+                ;;
+            2)
+                use_nvme_cli_with_downloaded_firmware "$device" "$model" "$firmware_file"
+                ;;
+            3)
+                provide_manual_update_instructions "$device" "$model" "$toolkit_exec" "$firmware_file" "$temp_dir"
+                ;;
+            *)
+                echo "Invalid option, providing manual instructions"
+                provide_manual_update_instructions "$device" "$model" "$toolkit_exec" "$firmware_file" "$temp_dir"
+                ;;
+        esac
+        
+    elif [[ -n "$toolkit_exec" ]]; then
+        echo -e "${YELLOW}DC Toolkit found but firmware not downloaded automatically${NC}"
+        echo "You can still use the DC Toolkit to search for and download firmware"
+        launch_dc_toolkit_standalone "$device" "$model" "$toolkit_exec"
+        
+    elif [[ -n "$firmware_file" ]]; then
+        echo -e "${YELLOW}Firmware found but DC Toolkit not downloaded automatically${NC}"
+        echo "You can use nvme-cli with the downloaded firmware"
+        use_nvme_cli_with_downloaded_firmware "$device" "$model" "$firmware_file"
+        
+    else
+        echo -e "${RED}Neither DC Toolkit nor firmware could be downloaded automatically${NC}"
+        manual_complete_download "$device" "$model"
+    fi
+}
+
+# Function to launch DC Toolkit with firmware
+launch_dc_toolkit_with_firmware() {
+    local device="$1"
+    local model="$2"
+    local toolkit_exec="$3"
+    local firmware_file="$4"
+    
+    echo -e "${CYAN}Launching Samsung DC Toolkit with Firmware${NC}"
+    echo ""
+    echo "Pre-update checklist:"
+    echo "✓ DC Toolkit executable: $(basename "$toolkit_exec")"
+    echo "✓ Firmware file: $(basename "$firmware_file")"
+    echo "• Target device: $device ($model)"
+    echo ""
+    
+    echo -e "${YELLOW}CRITICAL PRE-UPDATE STEPS:${NC}"
+    echo "1. Stop all VMs and containers using $device"
+    echo "2. Backup important data"
+    echo "3. Ensure UPS power if available"
+    echo ""
+    
+    if confirm_action "Proceed with DC Toolkit launch?"; then
+        log_message "INFO" "Launching Samsung DC Toolkit with firmware for $device"
+        
+        echo "Starting DC Toolkit..."
+        echo "Note: Point DC Toolkit to firmware file: $(basename "$firmware_file")"
+        echo ""
+        
+        # Try to run DC Toolkit
+        if "$toolkit_exec" 2>&1; then
+            echo -e "${GREEN}✓ DC Toolkit session completed${NC}"
+            post_update_verification "$device" "$model"
+        else
+            echo -e "${RED}✗ DC Toolkit exited with error or completed${NC}"
+            echo "This may be normal - check if firmware was updated"
+            post_update_verification "$device" "$model"
+        fi
+    fi
+}
+
+# Function to use nvme-cli with downloaded firmware
+use_nvme_cli_with_downloaded_firmware() {
+    local device="$1"
+    local model="$2"
+    local firmware_file="$3"
+    
+    echo -e "${CYAN}Using nvme-cli with Downloaded Firmware${NC}"
+    echo ""
+    echo "Firmware file: $(basename "$firmware_file")"
+    echo "Target device: $device ($model)"
+    echo ""
+    
+    # This is similar to the existing nvme-cli update but with pre-downloaded firmware
+    echo -e "${RED}CRITICAL WARNING:${NC}"
+    echo "• Firmware update will begin - DO NOT interrupt or power off!"
+    echo "• Ensure UPS power backup if available"
+    echo "• Stop all VMs using this drive"
+    echo "• This process may take several minutes"
+    echo ""
+    
+    if confirm_action "Proceed with nvme-cli firmware update using downloaded firmware?"; then
+        log_message "INFO" "Starting nvme-cli firmware update for $device with downloaded $firmware_file"
+        
+        echo "Step 1: Downloading firmware to drive..."
+        if nvme fw-download "$device" --fw="$firmware_file"; then
+            echo -e "${GREEN}✓ Firmware download successful${NC}"
+            
+            echo ""
+            echo "Step 2: Committing firmware (this will reboot the drive)..."
+            if nvme fw-commit "$device" --slot=1 --action=1; then
+                echo -e "${GREEN}✓ Firmware commit successful${NC}"
+                post_update_verification "$device" "$model"
+            else
+                echo -e "${RED}✗ Firmware commit failed${NC}"
+                log_message "ERROR" "nvme-cli firmware commit failed for $device"
+            fi
+        else
+            echo -e "${RED}✗ Firmware download failed${NC}"
+            log_message "ERROR" "nvme-cli firmware download failed for $device"
+        fi
+    fi
+}
+
+# Function to launch DC Toolkit standalone (when firmware not found)
+launch_dc_toolkit_standalone() {
+    local device="$1"
+    local model="$2"
+    local toolkit_exec="$3"
+    
+    echo -e "${CYAN}Launching Samsung DC Toolkit (Standalone)${NC}"
+    echo ""
+    echo "DC Toolkit executable: $(basename "$toolkit_exec")"
+    echo "Target device: $device ($model)"
+    echo ""
+    echo "Note: Use DC Toolkit to search for and download the correct firmware"
+    echo "for your $model before updating."
+    echo ""
+    
+    if confirm_action "Launch DC Toolkit now?"; then
+        log_message "INFO" "Launching Samsung DC Toolkit standalone for $device"
+        
+        echo "Starting DC Toolkit..."
+        echo ""
+        
+        # Try to run DC Toolkit
+        if "$toolkit_exec" 2>&1; then
+            echo -e "${GREEN}✓ DC Toolkit session completed${NC}"
+            post_update_verification "$device" "$model"
+        else
+            echo -e "${RED}✗ DC Toolkit exited with error or completed${NC}"
+            echo "This may be normal - check if firmware was updated"
+            post_update_verification "$device" "$model"
+        fi
+    fi
+}
+
+# Function for post-update verification guidance
+post_update_verification() {
+    local device="$1"
+    local model="$2"
+    
+    echo ""
+    echo -e "${BLUE}=== Post-Update Verification ===${NC}"
+    echo ""
+    echo -e "${YELLOW}Next steps after firmware update:${NC}"
+    echo "1. Reboot the system completely"
+    echo "2. Re-run this firmware scanner to verify new version:"
+    echo "   sudo firmware-scanner scan"
+    echo "3. Check system logs for any issues:"
+    echo "   journalctl -b | grep nvme"
+    echo "4. Verify drive is detected and working:"
+    echo "   lsblk | grep $(basename "$device")"
+    echo "5. Test storage performance if critical"
+    echo ""
+    log_message "INFO" "Samsung firmware update process completed for $device ($model)"
+}
+
+# Function to provide manual update instructions for complete package  
+provide_manual_update_instructions() {
+    local device="$1"
+    local model="$2"
+    local toolkit_exec="$3"
+    local firmware_file="$4"
+    local temp_dir="$5"
+    
+    echo -e "${BLUE}Manual Samsung Update Instructions${NC}"
+    echo ""
+    echo "Downloaded files are located in: $temp_dir"
+    echo ""
+    
+    if [[ -n "$toolkit_exec" ]]; then
+        echo "DC Toolkit executable: $toolkit_exec"
+        echo "To run manually: sudo $toolkit_exec"
+        echo ""
+    fi
+    
+    if [[ -n "$firmware_file" ]]; then
+        echo "Firmware file: $firmware_file"
+        echo "To update manually with nvme-cli:"
+        echo "  sudo nvme fw-download $device --fw=$firmware_file"
+        echo "  sudo nvme fw-commit $device --slot=1 --action=1"
+        echo ""
+    fi
+    
+    echo "Manual update steps:"
+    echo "1. Stop all VMs using $device"
+    echo "2. Backup important data"
+    echo "3. Use either DC Toolkit GUI or nvme-cli commands above"
+    echo "4. Reboot after update"
+    echo "5. Verify with: sudo firmware-scanner scan"
+}
+
+# Function for manual complete download fallback
+manual_complete_download() {
+    local device="$1"
+    local model="$2"
+    
+    echo -e "${BLUE}Manual Complete Download Instructions${NC}"
+    echo ""
+    echo "Automated search didn't find both DC Toolkit and firmware."
+    echo "Manual download steps:"
+    echo ""
+    echo "1. Visit: https://semiconductor.samsung.com/consumer-storage/support/tools/"
+    echo "2. Search for 'DC Toolkit' or 'Samsung Magician'"
+    echo "3. Search for firmware for your model: $model"
+    echo "4. Download both the toolkit and firmware"
+    echo ""
+    echo "Common search terms:"
+    echo "• 'DC Toolkit Linux'"
+    echo "• '$model firmware'"
+    echo "• 'Samsung firmware update'"
+    echo ""
+    echo "After downloading, you can use either:"
+    echo "• DC Toolkit GUI for guided update"
+    echo "• nvme-cli commands with firmware .bin file"
+}
+
+# Function to search and download Samsung DC Toolkit (legacy function for compatibility)
+search_and_download_dc_toolkit() {
+    local device="$1"
+    local model="$2"
+    
+    echo -e "${CYAN}Searching for Samsung DC Toolkit...${NC}"
+    echo ""
+    
+    local base_url="https://semiconductor.samsung.com/consumer-storage/support/tools/"
+    local temp_dir="/tmp/samsung_firmware_$$"
+    local download_success=false
+    
+    mkdir -p "$temp_dir"
+    cd "$temp_dir" || exit 1
+    
+    echo "Step 1: Searching Samsung tools website..."
+    log_message "INFO" "Searching for Samsung DC Toolkit from $base_url"
+    
+    # Try to get the tools page and search for DC Toolkit links
+    local tools_page="$temp_dir/tools_page.html"
+    if curl -L -s -o "$tools_page" "$base_url" 2>/dev/null; then
+        echo -e "${GREEN}✓ Downloaded tools page${NC}"
+        
+        # Search for DC Toolkit download links
+        echo "Step 2: Parsing for DC Toolkit download links..."
+        
+        # Common Samsung DC Toolkit patterns
+        local dc_toolkit_patterns=(
+            "DC.*[Tt]oolkit.*Linux"
+            "DC.*[Tt]oolkit.*linux"  
+            "dcToolkit.*linux"
+            "Samsung.*DC.*Toolkit"
+            "magician.*linux"
+            "nvme.*tool.*linux"
+        )
+        
+        local found_links=()
+        for pattern in "${dc_toolkit_patterns[@]}"; do
+            local links=$(grep -io 'href="[^"]*"[^>]*'"$pattern" "$tools_page" 2>/dev/null | sed 's/href="//;s/".*//' | head -3)
+            if [[ -n "$links" ]]; then
+                while IFS= read -r link; do
+                    [[ -n "$link" ]] && found_links+=("$link")
+                done <<< "$links"
+            fi
+        done
+        
+        if [[ ${#found_links[@]} -gt 0 ]]; then
+            echo -e "${GREEN}Found potential DC Toolkit downloads:${NC}"
+            for i in "${!found_links[@]}"; do
+                local link="${found_links[i]}"
+                # Make sure link is absolute
+                if [[ "$link" =~ ^/ ]]; then
+                    link="https://semiconductor.samsung.com$link"
+                elif [[ ! "$link" =~ ^https?:// ]]; then
+                    link="$base_url$link"
+                fi
+                echo "$((i+1)). $link"
+            done
+            echo ""
+            
+            # Try to download the first promising link
+            local download_link="${found_links[0]}"
+            if [[ "$download_link" =~ ^/ ]]; then
+                download_link="https://semiconductor.samsung.com$download_link"
+            fi
+            
+            attempt_dc_toolkit_download "$download_link" "$device" "$model"
+        else
+            echo -e "${YELLOW}No direct DC Toolkit downloads found on tools page${NC}"
+            manual_dc_toolkit_search "$device" "$model"
+        fi
+    else
+        echo -e "${YELLOW}Could not access tools page directly${NC}"
+        manual_dc_toolkit_search "$device" "$model"
+    fi
+    
+    # Cleanup
+    cd - >/dev/null 2>&1
+    rm -rf "$temp_dir"
+}
+
+# Function to attempt DC Toolkit download
+attempt_dc_toolkit_download() {
+    local download_url="$1"
+    local device="$2"
+    local model="$3"
+    
+    echo "Step 3: Attempting to download DC Toolkit..."
+    echo "URL: $download_url"
+    
+    local filename=$(basename "$download_url")
+    [[ -z "$filename" || "$filename" == "/" ]] && filename="samsung_dc_toolkit.tar.gz"
+    
+    if curl -L -o "$filename" "$download_url" 2>/dev/null; then
+        local file_size=$(stat -c%s "$filename" 2>/dev/null || echo "0")
+        
+        if [[ $file_size -gt 1024 ]]; then  # At least 1KB
+            echo -e "${GREEN}✓ Downloaded: $filename ($file_size bytes)${NC}"
+            log_message "INFO" "Successfully downloaded Samsung DC Toolkit: $filename"
+            
+            # Try to extract and run
+            extract_and_run_dc_toolkit "$filename" "$device" "$model"
+        else
+            echo -e "${RED}✗ Downloaded file is too small or empty${NC}"
+            manual_dc_toolkit_search "$device" "$model"
+        fi
+    else
+        echo -e "${RED}✗ Download failed${NC}"
+        manual_dc_toolkit_search "$device" "$model"
+    fi
+}
+
+# Function to extract and run DC Toolkit
+extract_and_run_dc_toolkit() {
+    local filename="$1"
+    local device="$2"
+    local model="$3"
+    
+    echo "Step 4: Extracting DC Toolkit..."
+    
+    local extract_dir="samsung_dc_toolkit_extracted"
+    mkdir -p "$extract_dir"
+    
+    # Try different extraction methods
+    if [[ "$filename" =~ \.tar\.gz$ ]] || [[ "$filename" =~ \.tgz$ ]]; then
+        if tar -xzf "$filename" -C "$extract_dir" 2>/dev/null; then
+            echo -e "${GREEN}✓ Extracted TAR.GZ archive${NC}"
+            find_and_run_dc_toolkit "$extract_dir" "$device" "$model"
+        else
+            echo -e "${RED}✗ Failed to extract TAR.GZ${NC}"
+            manual_dc_toolkit_instructions "$filename" "$device" "$model"
+        fi
+    elif [[ "$filename" =~ \.zip$ ]]; then
+        if command -v unzip &> /dev/null && unzip -q "$filename" -d "$extract_dir" 2>/dev/null; then
+            echo -e "${GREEN}✓ Extracted ZIP archive${NC}"
+            find_and_run_dc_toolkit "$extract_dir" "$device" "$model"
+        else
+            echo -e "${RED}✗ Failed to extract ZIP (unzip may not be installed)${NC}"
+            manual_dc_toolkit_instructions "$filename" "$device" "$model"
+        fi
+    elif file "$filename" | grep -q "executable"; then
+        echo -e "${GREEN}✓ Downloaded executable file${NC}"
+        chmod +x "$filename"
+        run_dc_toolkit_executable "$filename" "$device" "$model"
+    else
+        echo -e "${YELLOW}Unknown file format, providing manual instructions${NC}"
+        manual_dc_toolkit_instructions "$filename" "$device" "$model"
+    fi
+}
+
+# Function to find and run DC Toolkit in extracted directory
+find_and_run_dc_toolkit() {
+    local extract_dir="$1"
+    local device="$2"
+    local model="$3"
+    
+    echo "Step 5: Looking for DC Toolkit executable..."
+    
+    # Look for common DC Toolkit executable names
+    local executables=$(find "$extract_dir" -type f \( -name "*dc*toolkit*" -o -name "*magician*" -o -name "*samsung*" \) -executable 2>/dev/null)
+    
+    if [[ -n "$executables" ]]; then
+        echo "Found potential DC Toolkit executables:"
+        echo "$executables"
+        echo ""
+        
+        local first_exec=$(echo "$executables" | head -1)
+        echo "Using: $first_exec"
+        
+        run_dc_toolkit_executable "$first_exec" "$device" "$model"
+    else
+        echo -e "${YELLOW}No obvious DC Toolkit executable found${NC}"
+        echo "Contents of extracted directory:"
+        ls -la "$extract_dir"
+        echo ""
+        manual_dc_toolkit_instructions "$extract_dir" "$device" "$model"
+    fi
+}
+
+# Function to run DC Toolkit executable
+run_dc_toolkit_executable() {
+    local executable="$1"
+    local device="$2"
+    local model="$3"
+    
+    echo -e "${CYAN}Running Samsung DC Toolkit...${NC}"
+    echo ""
+    echo "Executable: $executable"
+    echo "Target device: $device"
+    echo "Model: $model"
+    echo ""
+    
+    echo -e "${YELLOW}IMPORTANT: Follow these guidelines when using DC Toolkit:${NC}"
+    echo "1. Stop all VMs using the target drive"
+    echo "2. Backup important data"
+    echo "3. Follow DC Toolkit's firmware update wizard"
+    echo "4. Do not interrupt the update process"
+    echo ""
+    
+    if confirm_action "Launch Samsung DC Toolkit now?"; then
+        log_message "INFO" "Launching Samsung DC Toolkit: $executable"
+        
+        echo "Launching DC Toolkit..."
+        echo "Note: DC Toolkit may require a GUI environment or specific dependencies"
+        echo ""
+        
+        # Try to run the executable
+        if "$executable" 2>&1; then
+            echo -e "${GREEN}✓ DC Toolkit completed${NC}"
+            echo ""
+            echo "After firmware update:"
+            echo "1. Reboot the system"
+            echo "2. Run firmware scanner to verify new version"
+            echo "3. Check system logs for any issues"
+            log_message "INFO" "Samsung DC Toolkit completed successfully"
+        else
+            echo -e "${RED}✗ DC Toolkit encountered an error or exited${NC}"
+            echo ""
+            echo "This might be normal if DC Toolkit requires:"
+            echo "• GUI environment (X11/Wayland)"
+            echo "• Specific libraries or dependencies"
+            echo "• Different execution method"
+            log_message "WARN" "Samsung DC Toolkit execution completed with non-zero exit"
+        fi
+    else
+        echo "DC Toolkit launch cancelled."
+        manual_dc_toolkit_instructions "$executable" "$device" "$model"
+    fi
+}
+
+# Function to provide manual DC Toolkit instructions
+manual_dc_toolkit_instructions() {
+    local file_or_dir="$1"
+    local device="$2"
+    local model="$3"
+    
+    echo -e "${BLUE}Manual DC Toolkit Usage Instructions${NC}"
+    echo ""
+    echo "Downloaded/extracted: $file_or_dir"
+    echo ""
+    echo "Manual steps to use Samsung DC Toolkit:"
+    echo ""
+    echo "1. Navigate to the downloaded/extracted location"
+    echo "2. Look for executable files (usually named with 'dc', 'toolkit', or 'samsung')"
+    echo "3. Run the executable with: sudo ./executable_name"
+    echo "4. Follow the firmware update wizard"
+    echo ""
+    echo "Common DC Toolkit executables:"
+    echo "• dcToolkit"
+    echo "• samsung_dc_toolkit"
+    echo "• magician_linux"
+    echo "• Samsung_Magician_installer"
+    echo ""
+    echo "If no executable found:"
+    echo "• Check for .deb or .rpm packages"
+    echo "• Look for installation scripts"
+    echo "• Check README or documentation files"
+    echo ""
+    echo "Target device for update: $device ($model)"
+}
+
+# Function for manual DC Toolkit search fallback
+manual_dc_toolkit_search() {
+    local device="$1"
+    local model="$2"
+    
+    echo -e "${BLUE}Manual DC Toolkit Search${NC}"
+    echo ""
+    echo "Automated search didn't find direct downloads. Manual steps:"
+    echo ""
+    echo "1. Visit: https://semiconductor.samsung.com/consumer-storage/support/tools/"
+    echo "2. Look for 'DC Toolkit' or 'Samsung Magician' Linux version"
+    echo "3. Search for your model: $model"
+    echo "4. Download the Linux-compatible version"
+    echo ""
+    echo "Alternative search terms to use on Samsung's site:"
+    echo "• 'DC Toolkit Linux'"
+    echo "• 'Samsung Magician Linux'"
+    echo "• 'NVMe firmware update tool'"
+    echo "• '$model firmware update'"
+    echo ""
+    echo "Once downloaded, you can:"
+    echo "• Extract and run the installer"
+    echo "• Use the firmware update wizard to update $device"
+    echo "• Or return to this tool and use the nvme-cli method instead"
+    echo ""
+    
+    if confirm_action "Would you like guidance for alternative update methods?"; then
+        echo ""
+        echo "Alternative update methods available:"
+        echo "1. Return to nvme-cli method (recommended)"
+        echo "2. Create bootable update media"
+        echo "3. Get direct firmware download links"
+        echo ""
+        echo -n "Select option (1-3): "
+        read -r alt_choice
+        
+        case "$alt_choice" in
+            1)
+                samsung_nvme_cli_update "$device" "$model"
+                ;;
+            2)
+                samsung_bootable_update "$device" "$model"
+                ;;
+            3)
+                samsung_download_links "$model"
+                ;;
+            *)
+                echo "Invalid option selected."
+                ;;
+        esac
+    fi
 }
 
 samsung_bootable_update() {
@@ -1118,7 +2335,9 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo ""
     echo "Samsung NVMe Update Support:"
     echo "  - Automatic Samsung drive detection"
-    echo "  - Multiple update methods (nvme-cli, Magician, bootable)"
+    echo "  - Multiple update methods (nvme-cli, DC Toolkit, bootable)"
+    echo "  - Automated DC Toolkit and firmware download from Samsung website"
+    echo "  - Automatic Samsung ISO decryption and .bin file extraction"
     echo "  - Step-by-step guided updates with safety checks"
     echo "  - Support for 990 PRO, 980 PRO and other Samsung NVMe drives"
     echo ""
