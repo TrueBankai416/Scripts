@@ -682,35 +682,377 @@ update_samsung_drive() {
     echo "Current firmware: $current_fw"
     echo ""
     echo "Samsung firmware update options:"
-    echo "1. Download firmware manually and use nvme-cli"
-    echo "2. Use Samsung Magician (if available for Linux)"
-    echo "3. Create bootable update media"
-    echo "4. Get firmware download links"
-    echo "5. Cancel"
+    echo "1. Use Samsung's fumagician tool (recommended - most reliable)"
+    echo "2. Download firmware manually and use nvme-cli"
+    echo "3. Use Samsung Magician (if available for Linux)"
+    echo "4. Create bootable update media"
+    echo "5. Get firmware download links"
+    echo "6. Cancel"
     echo ""
-    echo -n "Select update method (1-5): "
+    echo -n "Select update method (1-6): "
     read -r method
     
     case "$method" in
         1)
-            samsung_nvme_cli_update "$device" "$model"
+            samsung_fumagician_update "$device" "$model"
             ;;
         2)
-            samsung_magician_update "$device" "$model"
+            samsung_nvme_cli_update "$device" "$model"
             ;;
         3)
-            samsung_bootable_update "$device" "$model"
+            samsung_magician_update "$device" "$model"
             ;;
         4)
-            samsung_download_links "$model"
+            samsung_bootable_update "$device" "$model"
             ;;
         5)
+            samsung_download_links "$model"
+            ;;
+        6)
             echo "Samsung update cancelled."
             ;;
         *)
             echo "Invalid option."
             ;;
     esac
+}
+
+# Function for Samsung fumagician update (recommended method)
+samsung_fumagician_update() {
+    local device="$1"
+    local model="$2"
+    
+    echo -e "${BLUE}Samsung Fumagician Update (Recommended)${NC}"
+    echo ""
+    echo "This method uses Samsung's own fumagician tool directly from the ISO."
+    echo "Advantages:"
+    echo "• Most reliable - uses Samsung's official update utility"
+    echo "• No complex decryption or dependency issues"
+    echo "• Works on headless systems"
+    echo "• Standard Linux tools only (gzip, cpio, mount)"
+    echo ""
+    
+    # Try to determine the correct firmware ISO URL for the model
+    local iso_url=""
+    local iso_filename=""
+    
+    # Extract model series for URL construction
+    if [[ "$model" =~ 990.*PRO ]]; then
+        # Try to find the latest 990 PRO firmware
+        echo "Detecting latest firmware for Samsung 990 PRO series..."
+        iso_filename="Samsung_SSD_990_PRO_6B2QJXD7.iso"  # Latest known version
+        iso_url="https://download.semiconductor.samsung.com/resources/software-resources/$iso_filename"
+    elif [[ "$model" =~ 980.*PRO ]]; then
+        iso_filename="Samsung_SSD_980_PRO_5B2QGXA7.iso"  # Example - may need updating
+        iso_url="https://download.semiconductor.samsung.com/resources/software-resources/$iso_filename"
+    else
+        echo -e "${YELLOW}Automatic URL detection not available for this model${NC}"
+        echo "Please provide the firmware ISO download URL manually."
+        echo ""
+        echo -n "Enter firmware ISO URL: "
+        read -r iso_url
+        iso_filename=$(basename "$iso_url")
+    fi
+    
+    if [[ -z "$iso_url" ]]; then
+        echo -e "${RED}No firmware URL provided${NC}"
+        return 1
+    fi
+    
+    echo "Firmware ISO: $iso_filename"
+    echo "Download URL: $iso_url"
+    echo ""
+    
+    echo -e "${RED}CRITICAL PRE-UPDATE STEPS:${NC}"
+    echo "1. Stop all VMs and containers using $device"
+    echo "2. Backup important data"
+    echo "3. Ensure UPS power if available"
+    echo "4. System will require reboot after update"
+    echo ""
+    
+    if confirm_action "Proceed with Samsung fumagician firmware update?"; then
+        log_message "INFO" "Starting Samsung fumagician firmware update for $device with $iso_filename"
+        
+        local temp_dir="/tmp/samsung_fumagician_$$"
+        local iso_path="$temp_dir/$iso_filename"
+        local mount_point="$temp_dir/iso_mount"
+        local extract_dir="$temp_dir/fwupgrade"
+        
+        # Create working directories
+        echo "Creating working directories..."
+        mkdir -p "$temp_dir" "$mount_point" "$extract_dir"
+        
+        if [[ ! -d "$temp_dir" ]] || [[ ! -d "$mount_point" ]] || [[ ! -d "$extract_dir" ]]; then
+            echo -e "${RED}✗ Failed to create working directories${NC}"
+            echo "Temp dir: $temp_dir"
+            echo "Mount point: $mount_point" 
+            echo "Extract dir: $extract_dir"
+            return 1
+        fi
+        
+        echo -e "${GREEN}✓ Created working directories:${NC}"
+        echo "  Base: $temp_dir"
+        echo "  Mount: $mount_point"
+        echo "  Extract: $extract_dir"
+        
+        cd "$temp_dir" || exit 1
+        
+        echo "Step 1: Downloading Samsung firmware ISO..."
+        if curl -L -o "$iso_path" "$iso_url" 2>/dev/null; then
+            local file_size=$(stat -c%s "$iso_path" 2>/dev/null || echo "0")
+            echo -e "${GREEN}✓ Downloaded: $iso_filename ($file_size bytes)${NC}"
+        else
+            echo -e "${RED}✗ Download failed${NC}"
+            cleanup_fumagician "$temp_dir"
+            return 1
+        fi
+        
+        echo "Step 2: Mounting ISO..."
+        if mount -o loop "$iso_path" "$mount_point" 2>/dev/null; then
+            echo -e "${GREEN}✓ ISO mounted at $mount_point${NC}"
+        else
+            echo -e "${RED}✗ ISO mount failed${NC}"
+            cleanup_fumagician "$temp_dir"
+            return 1
+        fi
+        
+        echo "Step 3: Extracting fumagician from initrd..."
+        cd "$extract_dir" || exit 1
+        
+        if gzip -dc "$mount_point/initrd" 2>/dev/null | cpio -idv --no-absolute-filenames >/dev/null 2>&1; then
+            echo -e "${GREEN}✓ Initrd extracted${NC}"
+        else
+            echo -e "${RED}✗ Initrd extraction failed${NC}"
+            cleanup_fumagician "$temp_dir"
+            return 1
+        fi
+        
+        local fumagician_path="$extract_dir/root/fumagician/fumagician"
+        
+        if [[ -x "$fumagician_path" ]]; then
+            echo -e "${GREEN}✓ Found fumagician executable${NC}"
+        else
+            echo -e "${RED}✗ Fumagician executable not found or not executable${NC}"
+            echo "Contents of root/fumagician/:"
+            ls -la "$extract_dir/root/fumagician/" 2>/dev/null || echo "Directory not found"
+            cleanup_fumagician "$temp_dir"
+            return 1
+        fi
+        
+        echo ""
+        echo -e "${CYAN}Step 4: Running Samsung fumagician...${NC}"
+        echo "This will update the firmware directly using Samsung's official tool."
+        echo "Do not interrupt this process!"
+        echo ""
+        
+        # Change to fumagician directory and run it
+        cd "$extract_dir/root/fumagician" || exit 1
+        
+        if ./fumagician 2>&1; then
+            echo ""
+            echo -e "${GREEN}✓ Fumagician completed successfully${NC}"
+            echo ""
+            echo -e "${YELLOW}IMPORTANT: Reboot required for firmware update to take effect${NC}"
+            echo ""
+            echo "After reboot, verify the update with:"
+            echo "  sudo nvme id-ctrl $device | grep '^fr'"
+            echo ""
+            log_message "INFO" "Samsung fumagician firmware update completed successfully for $device"
+        else
+            echo ""
+            echo -e "${RED}✗ Fumagician execution completed with warnings/errors${NC}"
+            echo "This may be normal - check output above for details"
+            echo ""
+            echo "If update was successful, reboot and verify with:"
+            echo "  sudo nvme id-ctrl $device | grep '^fr'"
+            echo ""
+            log_message "WARN" "Samsung fumagician execution completed with non-zero exit for $device"
+        fi
+        
+        cleanup_fumagician "$temp_dir"
+    else
+        echo "Samsung fumagician update cancelled."
+    fi
+}
+
+# Function to cleanup fumagician temporary files
+cleanup_fumagician() {
+    local temp_dir="$1"
+    
+    # Unmount ISO if mounted
+    local mount_point="$temp_dir/iso_mount"
+    if mountpoint -q "$mount_point" 2>/dev/null; then
+        umount "$mount_point" 2>/dev/null
+    fi
+    
+    # Remove temporary directory
+    cd / 2>/dev/null
+    rm -rf "$temp_dir" 2>/dev/null
+}
+
+# Function to use fumagician method with already downloaded ISO from automation
+samsung_fumagician_method_with_downloaded_iso() {
+    local device="$1"
+    local model="$2"
+    local firmware_file="$3"
+    local temp_dir="$4"
+    
+    echo -e "${BLUE}Samsung Fumagician Method with Downloaded ISO${NC}"
+    echo ""
+    echo "Using the ISO that was automatically downloaded: $(basename "$firmware_file")"
+    echo ""
+    echo "This method:"
+    echo "• Uses Samsung's own fumagician tool directly from your downloaded ISO"
+    echo "• Most reliable approach (proven working)"
+    echo "• No complex decryption or dependency issues"
+    echo "• Uses standard Linux tools (gzip, cpio, mount)"
+    echo ""
+    
+    if [[ ! -f "$firmware_file" ]]; then
+        echo -e "${RED}✗ Firmware ISO file not found: $firmware_file${NC}"
+        return 1
+    fi
+    
+    # Check if it's actually an ISO file
+    if ! [[ "$firmware_file" =~ \.iso$ ]] || ! file "$firmware_file" | grep -qi "iso.*9660"; then
+        echo -e "${RED}✗ File is not a valid ISO: $firmware_file${NC}"
+        echo "This method requires a Samsung firmware ISO file"
+        return 1
+    fi
+    
+    echo -e "${RED}CRITICAL PRE-UPDATE STEPS:${NC}"
+    echo "1. Stop all VMs and containers using $device"
+    echo "2. Backup important data"
+    echo "3. Ensure UPS power if available"
+    echo "4. System will require reboot after update"
+    echo ""
+    
+    if confirm_action "Proceed with Samsung fumagician firmware update?"; then
+        log_message "INFO" "Starting Samsung fumagician method with downloaded ISO: $(basename "$firmware_file")"
+        
+        local fumagician_temp="/tmp/fumagician_update_$$"
+        local mount_point="$fumagician_temp/iso_mount"
+        local extract_dir="$fumagician_temp/fwupgrade"
+        
+        # Create working directories
+        echo "Creating working directories..."
+        mkdir -p "$fumagician_temp" "$mount_point" "$extract_dir"
+        
+        if [[ ! -d "$fumagician_temp" ]] || [[ ! -d "$mount_point" ]] || [[ ! -d "$extract_dir" ]]; then
+            echo -e "${RED}✗ Failed to create working directories${NC}"
+            return 1
+        fi
+        
+        echo -e "${GREEN}✓ Created working directories:${NC}"
+        echo "  Base: $fumagician_temp"
+        echo "  Mount: $mount_point"
+        echo "  Extract: $extract_dir"
+        
+        echo ""
+        echo "Step 1: Mounting downloaded Samsung ISO..."
+        if mount -o loop "$firmware_file" "$mount_point" 2>/dev/null; then
+            echo -e "${GREEN}✓ ISO mounted: $(basename "$firmware_file")${NC}"
+        else
+            echo -e "${RED}✗ Failed to mount ISO: $firmware_file${NC}"
+            cleanup_fumagician_automation "$fumagician_temp"
+            return 1
+        fi
+        
+        echo "Step 2: Extracting fumagician from initrd..."
+        cd "$extract_dir" || exit 1
+        
+        if [[ ! -f "$mount_point/initrd" ]]; then
+            echo -e "${RED}✗ initrd not found in mounted ISO${NC}"
+            echo "ISO contents:"
+            ls -la "$mount_point/" 2>/dev/null || echo "Cannot list ISO contents"
+            cleanup_fumagician_automation "$fumagician_temp"
+            return 1
+        fi
+        
+        # Extract using the proven working method
+        if gzip -dc "$mount_point/initrd" 2>/dev/null | cpio -idv --no-absolute-filenames >/dev/null 2>&1; then
+            echo -e "${GREEN}✓ Initrd extracted using gzip + cpio${NC}"
+        else
+            echo -e "${RED}✗ Failed to extract initrd${NC}"
+            cleanup_fumagician_automation "$fumagician_temp"
+            return 1
+        fi
+        
+        local fumagician_path="$extract_dir/root/fumagician/fumagician"
+        
+        if [[ -x "$fumagician_path" ]]; then
+            echo -e "${GREEN}✓ Found fumagician executable${NC}"
+        else
+            echo -e "${RED}✗ Fumagician executable not found or not executable${NC}"
+            echo "Expected path: $fumagician_path"
+            echo "Contents of root/fumagician/:"
+            ls -la "$extract_dir/root/fumagician/" 2>/dev/null || echo "Directory not found"
+            cleanup_fumagician_automation "$fumagician_temp"
+            return 1
+        fi
+        
+        echo ""
+        echo -e "${CYAN}Step 3: Running Samsung fumagician...${NC}"
+        echo "Using Samsung's official firmware update utility"
+        echo "Do not interrupt this process!"
+        echo ""
+        
+        # Change to fumagician directory and run it (following user's proven method)
+        cd "$extract_dir/root/fumagician" || exit 1
+        
+        echo "Executing: ./fumagician"
+        if ./fumagician 2>&1; then
+            echo ""
+            echo -e "${GREEN}✓ Samsung fumagician completed successfully!${NC}"
+            echo ""
+            echo -e "${YELLOW}IMPORTANT: Reboot required for firmware update to take effect${NC}"
+            echo ""
+            echo "After reboot, verify the update with:"
+            echo "  sudo nvme id-ctrl $device | grep '^fr'"
+            echo "  sudo firmware-scanner scan"
+            echo ""
+            log_message "INFO" "Samsung fumagician firmware update completed successfully for $device"
+        else
+            local exit_code=$?
+            echo ""
+            echo -e "${RED}✗ Fumagician exit code: $exit_code${NC}"
+            echo "This may be normal - check output above for details"
+            echo ""
+            echo "If the update was successful, reboot and verify with:"
+            echo "  sudo nvme id-ctrl $device | grep '^fr'"
+            echo ""
+            log_message "WARN" "Samsung fumagician completed with exit code $exit_code for $device"
+        fi
+        
+        cleanup_fumagician_automation "$fumagician_temp"
+        
+        echo ""
+        echo -e "${BLUE}Next Steps:${NC}"
+        echo "1. Reboot the system: sudo reboot"
+        echo "2. After reboot, check firmware version:"
+        echo "   sudo nvme id-ctrl $device | grep '^fr'"
+        echo "3. Run firmware scanner to verify:"
+        echo "   sudo firmware-scanner scan"
+        
+    else
+        echo "Samsung fumagician update cancelled."
+    fi
+}
+
+# Function to cleanup fumagician automation temporary files
+cleanup_fumagician_automation() {
+    local temp_dir="$1"
+    
+    # Unmount ISO if mounted
+    local mount_point="$temp_dir/iso_mount"
+    if mountpoint -q "$mount_point" 2>/dev/null; then
+        echo "Unmounting ISO..."
+        umount "$mount_point" 2>/dev/null
+    fi
+    
+    # Remove temporary directory
+    cd / 2>/dev/null
+    rm -rf "$temp_dir" 2>/dev/null
 }
 
 # Function for Samsung nvme-cli update
@@ -1772,13 +2114,14 @@ launch_complete_samsung_update() {
         fi
         
         echo "Update options:"
-        echo "1. Launch DC Toolkit GUI (recommended for .iso files)"
+        echo "1. Use Samsung fumagician method (recommended - most reliable)"
+        echo "2. Launch DC Toolkit GUI"
         if [[ "$is_iso" == true ]]; then
-            echo "2. Use nvme-cli with automatic ISO decryption"
+            echo "3. Use nvme-cli with automatic ISO decryption"
         else
-            echo "2. Use nvme-cli with downloaded firmware"
+            echo "3. Use nvme-cli with downloaded firmware"
         fi
-        echo "3. Manual instructions"
+        echo "4. Manual instructions"
         echo ""
         
         if [[ "$is_iso" == true ]]; then
@@ -1787,17 +2130,21 @@ launch_complete_samsung_update() {
             echo "• nvme-cli requires ISO decryption first (automatic)"
         fi
         echo ""
-        echo -n "Select option (1-3): "
+        echo -n "Select option (1-4): "
         read -r choice
         
         case "$choice" in
             1)
-                launch_dc_toolkit_with_firmware "$device" "$model" "$toolkit_exec" "$firmware_file"
+                # Use fumagician method with the downloaded ISO
+                samsung_fumagician_method_with_downloaded_iso "$device" "$model" "$firmware_file" "$temp_dir"
                 ;;
             2)
-                use_nvme_cli_with_downloaded_firmware "$device" "$model" "$firmware_file"
+                launch_dc_toolkit_with_firmware "$device" "$model" "$toolkit_exec" "$firmware_file"
                 ;;
             3)
+                use_nvme_cli_with_downloaded_firmware "$device" "$model" "$firmware_file"
+                ;;
+            4)
                 provide_manual_update_instructions "$device" "$model" "$toolkit_exec" "$firmware_file" "$temp_dir"
                 ;;
             *)
