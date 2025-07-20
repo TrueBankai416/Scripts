@@ -98,24 +98,34 @@ detect_root_setup() {
         # Get the actual disk device
         local disk_device=""
         
+        echo "DEBUG: Starting disk detection for: $pv_device"
+        
         # Try to get parent device name using lsblk
         local parent_name=$(lsblk -no PKNAME "$pv_device" 2>/dev/null | head -1 | tr -d ' ')
+        echo "DEBUG: lsblk returned parent_name: '$parent_name'"
         if [[ -n "$parent_name" ]]; then
             disk_device="/dev/$parent_name"
+            echo "DEBUG: Set disk_device from lsblk: $disk_device"
         fi
         
         # If lsblk didn't work or returned empty, use multiple fallback methods
         if [[ -z "$disk_device" || "$disk_device" == "/dev/" ]]; then
+            echo "DEBUG: Using fallback methods"
             # Method 1: Handle NVMe devices (nvme0n1p3 -> nvme0n1)
             if [[ "$pv_device" =~ nvme.*p[0-9]+$ ]]; then
                 disk_device=$(echo "$pv_device" | sed 's/p[0-9]*$//')
+                echo "DEBUG: NVMe pattern matched, set disk_device: $disk_device"
             # Method 2: Handle traditional devices (sda1 -> sda)
             elif [[ "$pv_device" =~ [0-9]+$ ]]; then
                 disk_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
+                echo "DEBUG: Traditional pattern matched, set disk_device: $disk_device"
             else
                 disk_device="$pv_device"
+                echo "DEBUG: No pattern matched, using original: $disk_device"
             fi
         fi
+        
+        echo "DEBUG: Final disk_device value: $disk_device"
         
         # Final validation that we have a valid disk device
         if [[ ! -b "$disk_device" ]]; then
