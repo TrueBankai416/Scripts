@@ -98,44 +98,31 @@ detect_root_setup() {
         # Get the actual disk device
         local disk_device=""
         
-        echo "DEBUG: Starting disk detection for: $pv_device"
-        
         # Try to get parent device name using lsblk
         local parent_name=$(lsblk -no PKNAME "$pv_device" 2>/dev/null | head -1 | tr -d ' ')
-        echo "DEBUG: lsblk returned parent_name: '$parent_name'"
         
         # Check if lsblk returned a valid parent (different from the partition)
         if [[ -n "$parent_name" && "$parent_name" != "$(basename "$pv_device")" ]]; then
             disk_device="/dev/$parent_name"
-            echo "DEBUG: Set disk_device from lsblk: $disk_device"
         else
-            echo "DEBUG: lsblk didn't return valid parent, will use fallback"
-        fi
-        
-        # If lsblk didn't work or returned empty, use multiple fallback methods
-        if [[ -z "$disk_device" || "$disk_device" == "/dev/" ]]; then
-            echo "DEBUG: Using fallback methods"
-            # Method 1: Handle NVMe devices (nvme0n1p3 -> nvme0n1)
-            if [[ "$pv_device" =~ nvme.*p[0-9]+$ ]]; then
-                disk_device=$(echo "$pv_device" | sed 's/p[0-9]*$//')
-                echo "DEBUG: NVMe pattern matched, set disk_device: $disk_device"
-            # Method 2: Handle traditional devices (sda1 -> sda)
-            elif [[ "$pv_device" =~ [0-9]+$ ]]; then
-                disk_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
-                echo "DEBUG: Traditional pattern matched, set disk_device: $disk_device"
-            else
-                disk_device="$pv_device"
-                echo "DEBUG: No pattern matched, using original: $disk_device"
+            # If lsblk didn't work or returned empty, use multiple fallback methods
+            if [[ -z "$disk_device" || "$disk_device" == "/dev/" ]]; then
+                # Method 1: Handle NVMe devices (nvme0n1p3 -> nvme0n1)
+                if [[ "$pv_device" =~ nvme.*p[0-9]+$ ]]; then
+                    disk_device=$(echo "$pv_device" | sed 's/p[0-9]*$//')
+                # Method 2: Handle traditional devices (sda1 -> sda)
+                elif [[ "$pv_device" =~ [0-9]+$ ]]; then
+                    disk_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
+                else
+                    disk_device="$pv_device"
+                fi
             fi
         fi
-        
-        echo "DEBUG: Final disk_device value: $disk_device"
         
         # Final validation that we have a valid disk device
         if [[ ! -b "$disk_device" ]]; then
             echo -e "${RED}Error: Cannot determine parent disk for $pv_device${NC}"
             echo "Attempted disk device: $disk_device"
-            echo "Debug: parent_name from lsblk = '$parent_name'"
             return 1
         fi
         
@@ -165,20 +152,18 @@ check_expansion_opportunities() {
     
     echo "Checking partition $partition_num on $DISK_DEVICE..."
     
-    # Get disk size (ensure single result and trim whitespace)
-    local disk_size=$(lsblk -bno SIZE "$DISK_DEVICE" 2>/dev/null | head -1 | tr -d ' ')
+    # Get disk size (use -d flag to get only disk size, not child devices)
+    local disk_size=$(lsblk -bnd -o SIZE "$DISK_DEVICE" 2>/dev/null | tr -d ' ')
     if [[ -z "$disk_size" || ! "$disk_size" =~ ^[0-9]+$ ]]; then
         echo -e "${RED}Error: Could not get disk size for $DISK_DEVICE${NC}"
-        echo "DEBUG: disk_size value: '$disk_size'"
         return 1
     fi
     local disk_gb=$((disk_size / 1073741824))
     
-    # Get partition size (ensure single result and trim whitespace)
-    local partition_size=$(lsblk -bno SIZE "$PV_DEVICE" 2>/dev/null | head -1 | tr -d ' ')
+    # Get partition size (use -d flag to get only partition size, not child devices)
+    local partition_size=$(lsblk -bnd -o SIZE "$PV_DEVICE" 2>/dev/null | tr -d ' ')
     if [[ -z "$partition_size" || ! "$partition_size" =~ ^[0-9]+$ ]]; then
         echo -e "${RED}Error: Could not get partition size for $PV_DEVICE${NC}"
-        echo "DEBUG: partition_size value: '$partition_size'"
         return 1
     fi
     local partition_gb=$((partition_size / 1073741824))
