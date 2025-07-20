@@ -103,9 +103,13 @@ detect_root_setup() {
         # Try to get parent device name using lsblk
         local parent_name=$(lsblk -no PKNAME "$pv_device" 2>/dev/null | head -1 | tr -d ' ')
         echo "DEBUG: lsblk returned parent_name: '$parent_name'"
-        if [[ -n "$parent_name" ]]; then
+        
+        # Check if lsblk returned a valid parent (different from the partition)
+        if [[ -n "$parent_name" && "$parent_name" != "$(basename "$pv_device")" ]]; then
             disk_device="/dev/$parent_name"
             echo "DEBUG: Set disk_device from lsblk: $disk_device"
+        else
+            echo "DEBUG: lsblk didn't return valid parent, will use fallback"
         fi
         
         # If lsblk didn't work or returned empty, use multiple fallback methods
@@ -161,10 +165,11 @@ check_expansion_opportunities() {
     
     echo "Checking partition $partition_num on $DISK_DEVICE..."
     
-    # Get disk size (ensure single result)
-    local disk_size=$(lsblk -bno SIZE "$DISK_DEVICE" 2>/dev/null | head -1)
+    # Get disk size (ensure single result and trim whitespace)
+    local disk_size=$(lsblk -bno SIZE "$DISK_DEVICE" 2>/dev/null | head -1 | tr -d ' ')
     if [[ -z "$disk_size" || ! "$disk_size" =~ ^[0-9]+$ ]]; then
         echo -e "${RED}Error: Could not get disk size for $DISK_DEVICE${NC}"
+        echo "DEBUG: disk_size value: '$disk_size'"
         return 1
     fi
     local disk_gb=$((disk_size / 1073741824))
