@@ -104,17 +104,24 @@ detect_root_setup() {
             disk_device="/dev/$parent_name"
         fi
         
-        # If lsblk didn't work or returned empty, use fallback logic
+        # If lsblk didn't work or returned empty, use multiple fallback methods
         if [[ -z "$disk_device" || "$disk_device" == "/dev/" ]]; then
-            # For devices like /dev/nvme0n1p3 -> /dev/nvme0n1
-            # For devices like /dev/sda1 -> /dev/sda
-            disk_device=$(echo "$pv_device" | sed 's/p\?[0-9]\+$//')
+            # Method 1: Handle NVMe devices (nvme0n1p3 -> nvme0n1)
+            if [[ "$pv_device" =~ nvme.*p[0-9]+$ ]]; then
+                disk_device=$(echo "$pv_device" | sed 's/p[0-9]*$//')
+            # Method 2: Handle traditional devices (sda1 -> sda)
+            elif [[ "$pv_device" =~ [0-9]+$ ]]; then
+                disk_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
+            else
+                disk_device="$pv_device"
+            fi
         fi
         
-        # Validate that we have a valid disk device
+        # Final validation that we have a valid disk device
         if [[ ! -b "$disk_device" ]]; then
             echo -e "${RED}Error: Cannot determine parent disk for $pv_device${NC}"
-            echo "Detected disk device: $disk_device (not a block device)"
+            echo "Attempted disk device: $disk_device"
+            echo "Debug: parent_name from lsblk = '$parent_name'"
             return 1
         fi
         
