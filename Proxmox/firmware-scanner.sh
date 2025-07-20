@@ -1666,11 +1666,33 @@ prepare_samsung_update_package() {
         echo "No direct executable found, checking for archives to extract..."
         extract_samsung_packages "$temp_dir"
         
-        # Re-scan for executables after extraction
-        toolkit_exec=$(find "$temp_dir" -name "*toolkit*" -o -name "*magician*" -o -name "*samsung*" -executable 2>/dev/null | head -1)
-        if [[ -n "$toolkit_exec" ]]; then
-            chmod +x "$toolkit_exec"
-            echo -e "${GREEN}✓ Found and made executable after extraction: $(basename "$toolkit_exec")${NC}"
+        # Re-scan for executables after extraction with better filtering
+        echo "Searching for DC Toolkit executables after extraction..."
+        local potential_execs=$(find "$temp_dir" -type f \( -name "*toolkit*" -o -name "*magician*" -o -name "*samsung*" \) 2>/dev/null)
+        
+        if [[ -n "$potential_execs" ]]; then
+            echo "Found potential executable files:"
+            while IFS= read -r exec_file; do
+                echo "  • $(basename "$exec_file")"
+                
+                # Check if it's a real executable file (not directory)
+                if [[ -f "$exec_file" ]] && (file "$exec_file" | grep -qi "executable\|elf" || [[ "$exec_file" =~ \.(sh|run)$ ]]); then
+                    toolkit_exec="$exec_file"
+                    chmod +x "$toolkit_exec"
+                    echo -e "${GREEN}✓ Found and made executable: $(basename "$toolkit_exec")${NC}"
+                    break
+                fi
+            done <<< "$potential_execs"
+        fi
+        
+        # If still no executable found, look more broadly
+        if [[ -z "$toolkit_exec" ]]; then
+            echo "Searching for any executable files in extracted content..."
+            toolkit_exec=$(find "$temp_dir" -type f -executable 2>/dev/null | head -1)
+            if [[ -n "$toolkit_exec" ]]; then
+                echo -e "${GREEN}✓ Found executable: $(basename "$toolkit_exec")${NC}"
+                chmod +x "$toolkit_exec"
+            fi
         fi
     fi
     
@@ -1825,10 +1847,36 @@ launch_dc_toolkit_with_firmware() {
         log_message "INFO" "Launching Samsung DC Toolkit with firmware for $device"
         
         echo "Starting DC Toolkit..."
+        echo "Toolkit path: $toolkit_exec"
         echo "Note: Point DC Toolkit to firmware file: $(basename "$firmware_file")"
         echo ""
         
+        # Validate toolkit executable before trying to run it
+        if [[ ! -f "$toolkit_exec" ]]; then
+            echo -e "${RED}✗ Error: DC Toolkit path is not a file: $toolkit_exec${NC}"
+            if [[ -d "$toolkit_exec" ]]; then
+                echo "Path is a directory - searching for executables within it..."
+                local dir_exec=$(find "$toolkit_exec" -type f -executable 2>/dev/null | head -1)
+                if [[ -n "$dir_exec" ]]; then
+                    toolkit_exec="$dir_exec"
+                    echo -e "${GREEN}✓ Found executable in directory: $(basename "$toolkit_exec")${NC}"
+                else
+                    echo -e "${RED}✗ No executable found in directory${NC}"
+                    echo "Directory contents:"
+                    ls -la "$toolkit_exec"/ 2>/dev/null || echo "Cannot list directory contents"
+                    return 1
+                fi
+            else
+                echo -e "${RED}✗ Invalid toolkit path${NC}"
+                return 1
+            fi
+        fi
+        
+        # Make sure it's executable
+        chmod +x "$toolkit_exec" 2>/dev/null
+        
         # Try to run DC Toolkit
+        echo "Executing: $toolkit_exec"
         if "$toolkit_exec" 2>&1; then
             echo -e "${GREEN}✓ DC Toolkit session completed${NC}"
             post_update_verification "$device" "$model"
