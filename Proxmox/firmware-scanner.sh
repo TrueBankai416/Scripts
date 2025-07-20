@@ -1013,8 +1013,43 @@ search_for_dc_toolkit() {
         local links=$(grep -io 'href="[^"]*"[^>]*'"$pattern" "$tools_page" 2>/dev/null | sed 's/href="//;s/".*//' | head -3)
         if [[ -n "$links" ]]; then
             while IFS= read -r link; do
-                [[ -n "$link" ]] && found_links+=("$link")
+                # Filter out invalid JavaScript links and empty/invalid URLs
+                if [[ -n "$link" && ! "$link" =~ javascript:|void\(0\)|^#|^$ ]]; then
+                    found_links+=("$link")
+                fi
             done <<< "$links"
+        fi
+    done
+    
+    # Search for direct download links to Samsung tools (bypass popups)
+    local direct_links=$(grep -io 'href="[^"]*download[^"]*\(magician\|toolkit\|dc.*tool\)[^"]*"' "$tools_page" 2>/dev/null | sed 's/href="//' | sed 's/"//')
+    if [[ -n "$direct_links" ]]; then
+        while IFS= read -r link; do
+            [[ -n "$link" && ! "$link" =~ javascript:|void\(0\) ]] && found_links+=("$link")
+        done <<< "$direct_links"
+    fi
+    
+    # Also search for Samsung download domain links
+    local samsung_download_links=$(grep -io 'https://download\.semiconductor\.samsung\.com[^"]*\(toolkit\|magician\|DC\)[^"]*' "$tools_page" 2>/dev/null)
+    if [[ -n "$samsung_download_links" ]]; then
+        while IFS= read -r link; do
+            [[ -n "$link" ]] && found_links+=("$link")
+        done <<< "$samsung_download_links"
+    fi
+    
+    # Search for known Samsung DC Toolkit patterns
+    local known_patterns=(
+        "Samsung_SSD_DC_Toolkit.*Linux.*V[0-9]"
+        "Samsung_Magician_DC_Linux"
+        "dc.*toolkit.*linux"
+    )
+    
+    for pattern in "${known_patterns[@]}"; do
+        local toolkit_links=$(grep -io 'https://[^"]*'"$pattern"'[^"]*' "$tools_page" 2>/dev/null)
+        if [[ -n "$toolkit_links" ]]; then
+            while IFS= read -r link; do
+                [[ -n "$link" ]] && found_links+=("$link")
+            done <<< "$toolkit_links"
         fi
     done
     
@@ -1041,9 +1076,96 @@ search_for_dc_toolkit() {
         download_dc_toolkit_file "$download_link" "$temp_dir"
         return $?
     else
-        echo -e "${YELLOW}No DC Toolkit links found in tools page${NC}"
-        return 1
+        echo -e "${YELLOW}No DC Toolkit links found in tools page - trying known direct URLs${NC}"
+        try_known_dc_toolkit_urls "$temp_dir"
+        return $?
     fi
+}
+
+# Function to try known Samsung DC Toolkit direct URLs with version detection
+try_known_dc_toolkit_urls() {
+    local temp_dir="$1"
+    
+    echo "Trying Samsung DC Toolkit direct download URLs with version detection..."
+    
+    # Base URL pattern for Samsung DC Toolkit
+    local base_url="https://download.semiconductor.samsung.com/resources/software-resources"
+    
+    # Try different version patterns based on the known naming scheme
+    local version_patterns=(
+        "Samsung_SSD_DC_Toolkit_Brand_for_Linux_V4.0"
+        "Samsung_SSD_DC_Toolkit_Brand_for_Linux_V3.1"
+        "Samsung_SSD_DC_Toolkit_Brand_for_Linux_V3.2"
+        "Samsung_SSD_DC_Toolkit_Brand_for_Linux_V3.0"
+        "Samsung_SSD_DC_Toolkit_Linux_64bit.tar.gz"
+        "Samsung_Magician_DC_Linux_64bit.zip"
+        "Samsung_SSD_DC_Toolkit_for_Linux_V3.0"
+        "Samsung_DC_Toolkit_Linux_V3.0"
+    )
+    
+    echo "Probing for latest version..."
+    local found_version=""
+    local found_url=""
+    
+    for pattern in "${version_patterns[@]}"; do
+        local test_url="$base_url/$pattern"
+        echo "Testing: $(basename "$pattern")"
+        
+        # Try a HEAD request to check if the URL exists
+        local http_code=$(curl -I -L -s -w "%{http_code}" -o /dev/null "$test_url" 2>/dev/null)
+        
+        if [[ "$http_code" == "200" ]]; then
+            echo -e "  ${GREEN}✓ HTTP $http_code - Available${NC}"
+            found_version="$pattern"
+            found_url="$test_url"
+            log_message "INFO" "Found available Samsung DC Toolkit: $pattern"
+            
+            # Download the first available version (they're ordered by preference)
+            download_dc_toolkit_file "$found_url" "$temp_dir"
+            return $?
+        else
+            echo "  HTTP $http_code - Not available"
+        fi
+    done
+    
+    # If no versioned URLs work, try some additional patterns
+    echo ""
+    echo "Trying additional Samsung tool patterns..."
+    local additional_patterns=(
+        "Samsung_Magician_Linux.tar.gz"
+        "Samsung_NVMe_Tools_Linux.zip"
+        "DC_Toolkit_Linux.tar.gz"
+    )
+    
+    for pattern in "${additional_patterns[@]}"; do
+        local test_url="$base_url/$pattern"
+        echo "Testing: $(basename "$pattern")"
+        
+        local http_code=$(curl -I -L -s -w "%{http_code}" -o /dev/null "$test_url" 2>/dev/null)
+        
+        if [[ "$http_code" == "200" ]]; then
+            echo -e "  ${GREEN}✓ HTTP $http_code - Available${NC}"
+            found_url="$test_url"
+            
+            download_dc_toolkit_file "$found_url" "$temp_dir"
+            return $?
+        else
+            echo "  HTTP $http_code - Not available"
+        fi
+    done
+    
+    echo -e "${RED}✗ No Samsung DC Toolkit found at known direct URLs${NC}"
+    echo "This might mean:"
+    echo "• Samsung has changed their download URL structure"
+    echo "• New version with different naming scheme"
+    echo "• Download requires authentication or newer access method"
+    echo ""
+    echo "Manual download suggestion:"
+    echo "• Visit: https://semiconductor.samsung.com/consumer-storage/support/tools/"
+    echo "• Look for DC Toolkit or Magician downloads"
+    echo "• Check popup dialogs for direct download links"
+    
+    return 1
 }
 
 # Function to search for model-specific firmware
@@ -1092,10 +1214,21 @@ search_for_firmware() {
         local links=$(grep -io 'href="[^"]*"[^>]*'"$pattern" "$tools_page" 2>/dev/null | sed 's/href="//;s/".*//' | head -5)
         if [[ -n "$links" ]]; then
             while IFS= read -r link; do
-                [[ -n "$link" ]] && firmware_links+=("$link")
+                # Filter out JavaScript links and only include actual file downloads
+                if [[ -n "$link" && ! "$link" =~ javascript:|void\(0\)|^#|^$ ]] && [[ "$link" =~ \.(iso|bin|zip|tar\.gz)$ ]]; then
+                    firmware_links+=("$link")
+                fi
             done <<< "$links"
         fi
     done
+    
+    # Also search for direct Samsung firmware ISO links
+    local iso_links=$(grep -io 'href="[^"]*samsung.*\(990\|980\|970\).*\.\(iso\|bin\)"' "$tools_page" 2>/dev/null | sed 's/href="//' | sed 's/"//')
+    if [[ -n "$iso_links" ]]; then
+        while IFS= read -r link; do
+            [[ -n "$link" && ! "$link" =~ javascript:|void\(0\) ]] && firmware_links+=("$link")
+        done <<< "$iso_links"
+    fi
     
     if [[ ${#firmware_links[@]} -gt 0 ]]; then
         echo -e "${GREEN}Found potential firmware downloads:${NC}"
@@ -1438,12 +1571,42 @@ check_iso_decryption_tools() {
         echo "Samsung firmware ISOs can be automatically decrypted and .bin files extracted"
     else
         echo -e "${YELLOW}⚠ Some ISO decryption tools missing: ${missing_tools[*]}${NC}"
-        echo "If Samsung firmware is downloaded as encrypted ISO, manual decryption will be needed"
         echo ""
-        echo "Install missing tools:"
-        echo "  Ubuntu/Debian: sudo apt install p7zip-full openssl xxd binutils"
-        echo "  CentOS/RHEL: sudo yum install p7zip openssl xxd binutils"
-        echo "  Fedora: sudo dnf install p7zip openssl xxd binutils"
+        
+        if confirm_action "Install missing Samsung ISO decryption tools now?"; then
+            echo "Installing missing tools..."
+            log_message "INFO" "Installing Samsung ISO decryption tools: ${missing_tools[*]}"
+            
+            # Detect package manager and install
+            if command -v apt &> /dev/null; then
+                apt update -qq
+                apt install -y p7zip-full openssl xxd binutils
+                echo -e "${GREEN}✓ Samsung ISO decryption tools installed${NC}"
+            elif command -v yum &> /dev/null; then
+                yum install -y p7zip openssl xxd binutils
+                echo -e "${GREEN}✓ Samsung ISO decryption tools installed${NC}"
+            elif command -v dnf &> /dev/null; then
+                dnf install -y p7zip openssl xxd binutils  
+                echo -e "${GREEN}✓ Samsung ISO decryption tools installed${NC}"
+            else
+                echo -e "${RED}Unable to auto-install - manual installation required${NC}"
+                echo "Install missing tools manually:"
+                echo "  Ubuntu/Debian: sudo apt install p7zip-full openssl xxd binutils"
+                echo "  CentOS/RHEL: sudo yum install p7zip openssl xxd binutils"
+                echo "  Fedora: sudo dnf install p7zip openssl xxd binutils"
+                return
+            fi
+            
+            echo "Samsung firmware ISOs can now be automatically decrypted"
+            log_message "INFO" "Samsung ISO decryption tools installation completed"
+        else
+            echo "If Samsung firmware is downloaded as encrypted ISO, manual decryption will be needed"
+            echo ""
+            echo "Install missing tools manually:"
+            echo "  Ubuntu/Debian: sudo apt install p7zip-full openssl xxd binutils"
+            echo "  CentOS/RHEL: sudo yum install p7zip openssl xxd binutils"
+            echo "  Fedora: sudo dnf install p7zip openssl xxd binutils"
+        fi
     fi
 }
 
@@ -1481,10 +1644,19 @@ prepare_samsung_update_package() {
                 echo -e "${GREEN}✓ Found and made executable: $basename_file${NC}"
             fi
             
-            # Check if it's firmware (.bin, .rom, etc.)
-            if [[ "$basename_file" =~ \.bin$|\.rom$|\.fw$ ]] || [[ "$basename_file" =~ firmware ]]; then
-                firmware_file="$file"
-                echo -e "${GREEN}✓ Found firmware file: $basename_file${NC}"
+            # Check if it's firmware (.bin, .rom, etc.) - exclude HTML files
+            if [[ "$basename_file" =~ \.bin$|\.rom$|\.fw$|\.iso$ ]] && [[ ! "$basename_file" =~ \.html?$ ]]; then
+                # Double-check it's not an HTML file by checking file type
+                if ! file "$file" | grep -qi "html\|text"; then
+                    firmware_file="$file"
+                    echo -e "${GREEN}✓ Found firmware file: $basename_file${NC}"
+                fi
+            elif [[ "$basename_file" =~ firmware ]] && [[ "$basename_file" =~ \.iso$|\.bin$ ]]; then
+                # Only accept firmware-named files if they're ISO or BIN and not HTML
+                if ! file "$file" | grep -qi "html\|text"; then
+                    firmware_file="$file"
+                    echo -e "${GREEN}✓ Found firmware file: $basename_file${NC}"
+                fi
             fi
         fi
     done
@@ -1504,14 +1676,23 @@ prepare_samsung_update_package() {
     
     # Re-scan for firmware files after extraction and ISO decryption
     if [[ -z "$firmware_file" ]]; then
-        # Look for .bin files (including decrypted Samsung firmware)
-        firmware_file=$(find "$temp_dir" -name "*.bin" -o -name "*.rom" -o -name "*.fw" 2>/dev/null | head -1)
-        if [[ -n "$firmware_file" ]]; then
-            echo -e "${GREEN}✓ Found firmware file after extraction: $(basename "$firmware_file")${NC}"
+        # First priority: Look for decrypted .bin files
+        firmware_file=$(find "$temp_dir" -name "*.bin" -o -name "*.rom" -o -name "*.fw" 2>/dev/null | grep -v "\.html" | head -1)
+        if [[ -n "$firmware_file" ]] && ! file "$firmware_file" | grep -qi "html\|text"; then
+            echo -e "${GREEN}✓ Found decrypted firmware file: $(basename "$firmware_file")${NC}"
         else
-            # Also check for Samsung-specific decrypted files
-            firmware_file=$(find "$temp_dir" -name "*firmware*.bin" -o -name "*DSRD*.bin" -o -name "*990PRO*.bin" -o -name "*980PRO*.bin" 2>/dev/null | head -1)
-            [[ -n "$firmware_file" ]] && echo -e "${GREEN}✓ Found Samsung decrypted firmware: $(basename "$firmware_file")${NC}"
+            # Second priority: Look for Samsung ISO files (if decryption failed)
+            firmware_file=$(find "$temp_dir" -name "*.iso" 2>/dev/null | grep -E "Samsung|990|980|970" | head -1)
+            if [[ -n "$firmware_file" ]] && ! file "$firmware_file" | grep -qi "html\|text"; then
+                echo -e "${GREEN}✓ Found Samsung firmware ISO: $(basename "$firmware_file")${NC}"
+                echo "  Note: ISO file will be used as-is (decryption failed or was skipped)"
+            else
+                # Third priority: Any legitimate firmware files
+                firmware_file=$(find "$temp_dir" -name "*firmware*" -o -name "*DSRD*" -o -name "*990PRO*" -o -name "*980PRO*" 2>/dev/null | grep -v "\.html" | head -1)
+                if [[ -n "$firmware_file" ]] && ! file "$firmware_file" | grep -qi "html\|text"; then
+                    echo -e "${GREEN}✓ Found Samsung firmware package: $(basename "$firmware_file")${NC}"
+                fi
+            fi
         fi
     fi
     
@@ -1562,10 +1743,27 @@ launch_complete_samsung_update() {
         echo "• Toolkit: $(basename "$toolkit_exec")"
         echo "• Firmware: $(basename "$firmware_file")"
         echo ""
+        # Detect firmware file type and adjust options accordingly
+        local is_iso=false
+        if [[ "$firmware_file" =~ \.iso$ ]]; then
+            is_iso=true
+        fi
+        
         echo "Update options:"
-        echo "1. Launch DC Toolkit GUI (recommended)"
-        echo "2. Use nvme-cli with downloaded firmware"
+        echo "1. Launch DC Toolkit GUI (recommended for .iso files)"
+        if [[ "$is_iso" == true ]]; then
+            echo "2. Use nvme-cli with automatic ISO decryption"
+        else
+            echo "2. Use nvme-cli with downloaded firmware"
+        fi
         echo "3. Manual instructions"
+        echo ""
+        
+        if [[ "$is_iso" == true ]]; then
+            echo -e "${BLUE}Note: Samsung firmware is in ISO format${NC}"
+            echo "• DC Toolkit can handle ISOs natively"
+            echo "• nvme-cli requires ISO decryption first (automatic)"
+        fi
         echo ""
         echo -n "Select option (1-3): "
         read -r choice
@@ -1653,6 +1851,54 @@ use_nvme_cli_with_downloaded_firmware() {
     echo "Firmware file: $(basename "$firmware_file")"
     echo "Target device: $device ($model)"
     echo ""
+    
+    # Check if firmware file is an encrypted ISO that needs special handling
+    if [[ "$firmware_file" =~ \.iso$ ]]; then
+        echo -e "${YELLOW}Samsung firmware ISO detected${NC}"
+        echo "Note: nvme-cli cannot directly use ISO files for firmware updates"
+        echo ""
+        echo "Options:"
+        echo "1. Install ISO decryption tools and retry (7z, openssl, xxd, binutils)"
+        echo "2. Use Samsung DC Toolkit GUI to handle the ISO"
+        echo "3. Manually decrypt the ISO and extract .bin files"
+        echo ""
+        
+        if confirm_action "Do you want to install ISO decryption tools and retry automatically?"; then
+            echo "Installing ISO decryption tools..."
+            
+            # Install tools based on package manager
+            if command -v apt &> /dev/null; then
+                apt update -qq
+                apt install -y p7zip-full openssl xxd binutils
+            elif command -v yum &> /dev/null; then
+                yum install -y p7zip openssl xxd binutils
+            elif command -v dnf &> /dev/null; then
+                dnf install -y p7zip openssl xxd binutils
+            fi
+            
+            echo -e "${GREEN}✓ Tools installed. Attempting ISO decryption...${NC}"
+            
+            # Try to decrypt the ISO
+            local temp_iso_dir=$(dirname "$firmware_file")
+            decrypt_samsung_iso "$firmware_file" "$temp_iso_dir" "990PRO"
+            
+            # Look for decrypted .bin files
+            local bin_file=$(find "$temp_iso_dir" -name "*.bin" 2>/dev/null | head -1)
+            if [[ -n "$bin_file" ]]; then
+                echo -e "${GREEN}✓ ISO decrypted successfully${NC}"
+                firmware_file="$bin_file"
+                echo "Using decrypted firmware: $(basename "$firmware_file")"
+            else
+                echo -e "${RED}✗ ISO decryption failed${NC}"
+                echo "Please use Samsung DC Toolkit GUI or manually decrypt the ISO"
+                return 1
+            fi
+        else
+            echo "ISO firmware cannot be used directly with nvme-cli"
+            echo "Please use Samsung DC Toolkit GUI or decrypt the ISO manually"
+            return 1
+        fi
+    fi
     
     # This is similar to the existing nvme-cli update but with pre-downloaded firmware
     echo -e "${RED}CRITICAL WARNING:${NC}"
