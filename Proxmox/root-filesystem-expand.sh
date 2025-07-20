@@ -289,14 +289,51 @@ show_lv_status() {
     vgs "$VG_NAME" 2>/dev/null
     echo ""
     
-    # Show current LVs
+    # Show current LVs with attributes to identify thin pools
     echo "Current Logical Volumes:"
-    lvs -o lv_name,lv_size,lv_path "$VG_NAME" 2>/dev/null
+    echo "Name     Size      Type     Path/Pool Info"
+    echo "-------- --------- -------- ----------------------------------"
+    
+    # Get LV information with attributes
+    while read -r lv_name lv_size lv_attr lv_path pool_lv data_percent meta_percent; do
+        local lv_type="Regular"
+        local additional_info="$lv_path"
+        
+        # Identify LV type by attributes
+        if [[ "$lv_attr" =~ ^t ]]; then
+            lv_type="ThinPool"
+            additional_info="Pool: ${data_percent}% data, ${meta_percent}% meta"
+        elif [[ "$lv_attr" =~ ^V ]]; then
+            lv_type="ThinVol"
+            additional_info="Pool: $pool_lv"
+        elif [[ "$lv_attr" =~ ^- ]]; then
+            lv_type="Regular"
+            additional_info="$lv_path"
+        fi
+        
+        # Format and display
+        printf "%-8s %-9s %-8s %s\n" "$lv_name" "$lv_size" "$lv_type" "$additional_info"
+        
+    done < <(lvs --noheadings -o lv_name,lv_size,lv_attr,lv_path,pool_lv,data_percent,metadata_percent "$VG_NAME" 2>/dev/null | grep -v '^\[')
+    
     echo ""
     
     # Show available free space
     local vg_free=$(vgs --noheadings -o vg_free "$VG_NAME" 2>/dev/null | head -1 | tr -d ' ')
     echo "Available free space: ${vg_free}"
+    
+    # Show thin pool details if any exist
+    local thin_pools=$(lvs --noheadings -o lv_name -S 'lv_attr=~^t' "$VG_NAME" 2>/dev/null | tr -d ' ')
+    if [[ -n "$thin_pools" ]]; then
+        echo ""
+        echo "Thin Pool Details:"
+        while read -r pool_name; do
+            if [[ -n "$pool_name" ]]; then
+                echo "- $pool_name: $(lvs --noheadings -o data_percent,metadata_percent "$VG_NAME/$pool_name" 2>/dev/null | tr -d ' ' | sed 's/^/Data: /' | sed 's/ /, Meta: /')%"
+            fi
+        done <<< "$thin_pools"
+    fi
+    
     echo ""
 }
 
@@ -352,10 +389,22 @@ custom_lv_expansion() {
         
         case "$lv_choice" in
             1)
-                # List available LVs
+                # List available LVs with types
                 echo ""
                 echo "Available Logical Volumes in VG '$VG_NAME':"
-                lvs --noheadings -o lv_name,lv_size "$VG_NAME" 2>/dev/null | nl
+                echo "Num  Name     Size      Type"
+                echo "---  -------- --------- --------"
+                local counter=1
+                while read -r lv_name lv_size lv_attr; do
+                    local lv_type="Regular"
+                    if [[ "$lv_attr" =~ ^t ]]; then
+                        lv_type="ThinPool"
+                    elif [[ "$lv_attr" =~ ^V ]]; then
+                        lv_type="ThinVol"
+                    fi
+                    printf "%3d  %-8s %-9s %s\n" "$counter" "$lv_name" "$lv_size" "$lv_type"
+                    ((counter++))
+                done < <(lvs --noheadings -o lv_name,lv_size,lv_attr "$VG_NAME" 2>/dev/null | grep -v '^\[')
                 echo ""
                 
                 # Get LV selection
@@ -368,9 +417,20 @@ custom_lv_expansion() {
                     continue
                 fi
                 
-                # Get current size
-                local current_size=$(lvs --noheadings -o lv_size "$VG_NAME/$lv_name" 2>/dev/null | tr -d ' ')
-                echo "Current size of '$lv_name': $current_size"
+                # Get current size and attributes
+                local lv_info=$(lvs --noheadings -o lv_size,lv_attr "$VG_NAME/$lv_name" 2>/dev/null)
+                local current_size=$(echo "$lv_info" | awk '{print $1}' | tr -d ' ')
+                local lv_attr=$(echo "$lv_info" | awk '{print $2}' | tr -d ' ')
+                
+                # Determine LV type
+                local lv_type="Regular"
+                if [[ "$lv_attr" =~ ^t ]]; then
+                    lv_type="Thin Pool"
+                elif [[ "$lv_attr" =~ ^V ]]; then
+                    lv_type="Thin Volume"
+                fi
+                
+                echo "Current size of '$lv_name': $current_size ($lv_type)"
                 
                 # Get target size
                 echo -n "Enter target size (e.g., 850G, 1T, 500GB): "
@@ -407,57 +467,78 @@ custom_lv_expansion() {
                     continue
                 fi
                 
-                # Perform expansion
+                # Perform expansion based on LV type
                 echo ""
-                echo "Expanding LV $VG_NAME/$lv_name to $lvm_size..."
                 log_message "INFO" "Expanding LV $VG_NAME/$lv_name to $lvm_size"
                 
-                if lvextend -L "$lvm_size" "$VG_NAME/$lv_name" 2>/dev/null; then
-                    echo -e "${GREEN}✓ Logical volume expanded successfully${NC}"
-                    log_message "INFO" "LV $VG_NAME/$lv_name expanded to $lvm_size"
+                if [[ "$lv_attr" =~ ^t ]]; then
+                    # Handle Thin Pool expansion
+                    echo "Expanding Thin Pool $VG_NAME/$lv_name to $lvm_size..."
                     
-                    # Expand filesystem
-                    local lv_path="/dev/$VG_NAME/$lv_name"
-                    echo "Expanding filesystem on $lv_path..."
+                    if lvextend -L "$lvm_size" "$VG_NAME/$lv_name" 2>/dev/null; then
+                        echo -e "${GREEN}✓ Thin Pool expanded successfully${NC}"
+                        echo -e "${GREEN}✓ Virtual machines can now use additional storage space${NC}"
+                        log_message "INFO" "Thin Pool $VG_NAME/$lv_name expanded to $lvm_size"
+                        
+                        # Show pool utilization
+                        local pool_info=$(lvs --noheadings -o data_percent,metadata_percent "$VG_NAME/$lv_name" 2>/dev/null | tr -d ' ')
+                        echo "Pool utilization: $pool_info"
+                    else
+                        echo -e "${RED}✗ Failed to expand thin pool${NC}"
+                        log_message "ERROR" "Failed to expand thin pool $VG_NAME/$lv_name to $lvm_size"
+                    fi
                     
-                    # Detect filesystem type
-                    local fs_type=$(blkid -o value -s TYPE "$lv_path" 2>/dev/null)
-                    
-                    case "$fs_type" in
-                        ext2|ext3|ext4)
-                            if resize2fs "$lv_path" 2>/dev/null; then
-                                echo -e "${GREEN}✓ Filesystem expanded successfully (ext)${NC}"
-                                log_message "INFO" "Filesystem expanded on $lv_path (ext)"
-                            else
-                                echo -e "${YELLOW}⚠ LV expanded but filesystem resize failed${NC}"
-                                log_message "WARNING" "Filesystem resize failed on $lv_path (ext)"
-                            fi
-                            ;;
-                        xfs)
-                            # For XFS, we need the mount point
-                            local mount_point=$(findmnt -n -o TARGET "$lv_path" 2>/dev/null)
-                            if [[ -n "$mount_point" ]] && xfs_growfs "$mount_point" 2>/dev/null; then
-                                echo -e "${GREEN}✓ Filesystem expanded successfully (xfs)${NC}"
-                                log_message "INFO" "Filesystem expanded on $lv_path (xfs)"
-                            else
-                                echo -e "${YELLOW}⚠ LV expanded but filesystem resize failed${NC}"
-                                log_message "WARNING" "Filesystem resize failed on $lv_path (xfs)"
-                            fi
-                            ;;
-                        *)
-                            echo -e "${YELLOW}⚠ LV expanded but unknown filesystem type: $fs_type${NC}"
-                            echo "You may need to manually resize the filesystem"
-                            log_message "WARNING" "Unknown filesystem type $fs_type on $lv_path"
-                            ;;
-                    esac
-                    
-                    echo ""
-                    echo "Updated status:"
-                    show_lv_status
                 else
-                    echo -e "${RED}✗ Failed to expand logical volume${NC}"
-                    log_message "ERROR" "Failed to expand LV $VG_NAME/$lv_name to $lvm_size"
+                    # Handle Regular LV expansion
+                    echo "Expanding Regular LV $VG_NAME/$lv_name to $lvm_size..."
+                    
+                    if lvextend -L "$lvm_size" "$VG_NAME/$lv_name" 2>/dev/null; then
+                        echo -e "${GREEN}✓ Logical volume expanded successfully${NC}"
+                        log_message "INFO" "LV $VG_NAME/$lv_name expanded to $lvm_size"
+                        
+                        # Expand filesystem for regular LVs
+                        local lv_path="/dev/$VG_NAME/$lv_name"
+                        echo "Expanding filesystem on $lv_path..."
+                        
+                        # Detect filesystem type
+                        local fs_type=$(blkid -o value -s TYPE "$lv_path" 2>/dev/null)
+                        
+                        case "$fs_type" in
+                            ext2|ext3|ext4)
+                                if resize2fs "$lv_path" 2>/dev/null; then
+                                    echo -e "${GREEN}✓ Filesystem expanded successfully (ext)${NC}"
+                                    log_message "INFO" "Filesystem expanded on $lv_path (ext)"
+                                else
+                                    echo -e "${YELLOW}⚠ LV expanded but filesystem resize failed${NC}"
+                                    log_message "WARNING" "Filesystem resize failed on $lv_path (ext)"
+                                fi
+                                ;;
+                            xfs)
+                                # For XFS, we need the mount point
+                                local mount_point=$(findmnt -n -o TARGET "$lv_path" 2>/dev/null)
+                                if [[ -n "$mount_point" ]] && xfs_growfs "$mount_point" 2>/dev/null; then
+                                    echo -e "${GREEN}✓ Filesystem expanded successfully (xfs)${NC}"
+                                    log_message "INFO" "Filesystem expanded on $lv_path (xfs)"
+                                else
+                                    echo -e "${YELLOW}⚠ LV expanded but filesystem resize failed${NC}"
+                                    log_message "WARNING" "Filesystem resize failed on $lv_path (xfs)"
+                                fi
+                                ;;
+                            *)
+                                echo -e "${YELLOW}⚠ LV expanded but unknown filesystem type: $fs_type${NC}"
+                                echo "You may need to manually resize the filesystem"
+                                log_message "WARNING" "Unknown filesystem type $fs_type on $lv_path"
+                                ;;
+                        esac
+                    else
+                        echo -e "${RED}✗ Failed to expand logical volume${NC}"
+                        log_message "ERROR" "Failed to expand LV $VG_NAME/$lv_name to $lvm_size"
+                    fi
                 fi
+                
+                echo ""
+                echo "Updated status:"
+                show_lv_status
                 ;;
             2)
                 show_lv_status
