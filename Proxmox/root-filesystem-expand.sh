@@ -95,14 +95,29 @@ detect_root_setup() {
         local pv_device=$(pvs --noheadings -o pv_name -S vg_name="$vg_name" 2>/dev/null | tr -d ' ')
         echo "Physical Volume: $pv_device"
         
-        # Get the actual disk
-        local disk_device=$(lsblk -no PKNAME "$pv_device" 2>/dev/null | head -1)
-        if [[ -n "$disk_device" ]]; then
-            disk_device="/dev/$disk_device"
-        else
-            # Fallback: extract disk name from partition
-            disk_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
+        # Get the actual disk device
+        local disk_device=""
+        
+        # Try to get parent device name using lsblk
+        local parent_name=$(lsblk -no PKNAME "$pv_device" 2>/dev/null | head -1 | tr -d ' ')
+        if [[ -n "$parent_name" ]]; then
+            disk_device="/dev/$parent_name"
         fi
+        
+        # If lsblk didn't work or returned empty, use fallback logic
+        if [[ -z "$disk_device" || "$disk_device" == "/dev/" ]]; then
+            # For devices like /dev/nvme0n1p3 -> /dev/nvme0n1
+            # For devices like /dev/sda1 -> /dev/sda
+            disk_device=$(echo "$pv_device" | sed 's/p\?[0-9]\+$//')
+        fi
+        
+        # Validate that we have a valid disk device
+        if [[ ! -b "$disk_device" ]]; then
+            echo -e "${RED}Error: Cannot determine parent disk for $pv_device${NC}"
+            echo "Detected disk device: $disk_device (not a block device)"
+            return 1
+        fi
+        
         echo "Physical disk: $disk_device"
         
         # Store for later use
