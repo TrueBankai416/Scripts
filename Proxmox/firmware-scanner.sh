@@ -488,6 +488,442 @@ generate_report() {
     echo ""
 }
 
+# Function to update firmware interactively
+interactive_firmware_updater() {
+    echo -e "${CYAN}=== Interactive Firmware Updater ===${NC}"
+    echo ""
+    
+    check_required_tools
+    
+    echo -e "${RED}WARNING: Firmware updates can be risky! Always backup your data first.${NC}"
+    echo -e "${YELLOW}This tool will guide you through firmware updates for detected drives.${NC}"
+    echo ""
+    
+    if ! confirm_action "Continue with firmware update process?"; then
+        echo "Update cancelled."
+        return 1
+    fi
+    
+    # Scan and display drives
+    echo -e "${BLUE}Scanning for drives...${NC}"
+    echo ""
+    
+    local nvme_drives=($(lsblk -d -n -o NAME,TYPE | awk '$2=="disk" {print $1}' | grep -E '^nvme'))
+    local sata_drives=($(lsblk -d -n -o NAME,TYPE | awk '$2=="disk" {print $1}' | grep -v -E '^nvme|^loop|^sr'))
+    
+    local all_drives=()
+    local drive_info=()
+    local counter=1
+    
+    # Collect NVMe drives
+    for drive in "${nvme_drives[@]}"; do
+        local device="/dev/$drive"
+        local model="Unknown"
+        local firmware="Unknown"
+        
+        if command -v nvme &> /dev/null; then
+            model=$(nvme id-ctrl "$device" 2>/dev/null | grep "^mn " | cut -d':' -f2 | xargs || echo "Unknown")
+            firmware=$(nvme id-ctrl "$device" 2>/dev/null | grep "^fr " | awk '{print $3}' || echo "Unknown")
+        fi
+        
+        all_drives+=("$device")
+        drive_info+=("NVMe: $model (FW: $firmware)")
+        echo "$counter. $device - NVMe: $model (Firmware: $firmware)"
+        ((counter++))
+    done
+    
+    # Collect SATA drives
+    for drive in "${sata_drives[@]}"; do
+        local device="/dev/$drive"
+        local model="Unknown"
+        local firmware="Unknown"
+        
+        if command -v smartctl &> /dev/null; then
+            local smart_info=$(smartctl -i "$device" 2>/dev/null)
+            if [[ $? -eq 0 ]]; then
+                model=$(echo "$smart_info" | grep "Device Model" | cut -d':' -f2 | xargs || echo "Unknown")
+                firmware=$(echo "$smart_info" | grep "Firmware Version" | cut -d':' -f2 | xargs || echo "Unknown")
+            fi
+        fi
+        
+        all_drives+=("$device")
+        drive_info+=("SATA: $model (FW: $firmware)")
+        echo "$counter. $device - SATA: $model (Firmware: $firmware)"
+        ((counter++))
+    done
+    
+    if [[ ${#all_drives[@]} -eq 0 ]]; then
+        echo "No drives detected for firmware updates."
+        return 1
+    fi
+    
+    echo ""
+    echo "$((counter++)). Exit updater"
+    echo ""
+    echo -n "Select drive to update (1-$counter): "
+    read -r selection
+    
+    if [[ "$selection" == "$counter" || "$selection" -gt "${#all_drives[@]}" ]]; then
+        echo "Exiting firmware updater."
+        return 0
+    fi
+    
+    if [[ "$selection" -lt 1 || "$selection" -gt "${#all_drives[@]}" ]]; then
+        echo "Invalid selection."
+        return 1
+    fi
+    
+    local selected_drive="${all_drives[$((selection-1))]}"
+    local selected_info="${drive_info[$((selection-1))]}"
+    
+    echo ""
+    echo -e "${CYAN}Selected drive: $selected_drive${NC}"
+    echo "Drive info: $selected_info"
+    echo ""
+    
+    update_selected_drive "$selected_drive"
+}
+
+# Function to update a selected drive
+update_selected_drive() {
+    local device="$1"
+    
+    echo -e "${BLUE}=== Updating Firmware for $device ===${NC}"
+    echo ""
+    
+    # Determine drive type and manufacturer
+    local drive_type="unknown"
+    local manufacturer="unknown"
+    local model="unknown"
+    local current_fw="unknown"
+    
+    if [[ "$device" =~ nvme ]]; then
+        drive_type="nvme"
+        if command -v nvme &> /dev/null; then
+            model=$(nvme id-ctrl "$device" 2>/dev/null | grep "^mn " | cut -d':' -f2 | xargs || echo "Unknown")
+            current_fw=$(nvme id-ctrl "$device" 2>/dev/null | grep "^fr " | awk '{print $3}' || echo "Unknown")
+            
+            if [[ "$model" =~ [Ss]amsung ]]; then
+                manufacturer="samsung"
+            elif [[ "$model" =~ [Ii]ntel ]]; then
+                manufacturer="intel"
+            elif [[ "$model" =~ [Ww]estern.*[Dd]igital|WD ]]; then
+                manufacturer="wd"
+            elif [[ "$model" =~ [Cc]rucial|[Mm]icron ]]; then
+                manufacturer="crucial"
+            fi
+        fi
+    else
+        drive_type="sata"
+        if command -v smartctl &> /dev/null; then
+            local smart_info=$(smartctl -i "$device" 2>/dev/null)
+            if [[ $? -eq 0 ]]; then
+                model=$(echo "$smart_info" | grep "Device Model" | cut -d':' -f2 | xargs || echo "Unknown")
+                current_fw=$(echo "$smart_info" | grep "Firmware Version" | cut -d':' -f2 | xargs || echo "Unknown")
+                
+                if [[ "$model" =~ [Ss]eagate ]]; then
+                    manufacturer="seagate"
+                elif [[ "$model" =~ [Ww]estern.*[Dd]igital|WD ]]; then
+                    manufacturer="wd"
+                elif [[ "$model" =~ [Tt]oshiba ]]; then
+                    manufacturer="toshiba"
+                elif [[ "$model" =~ HGST ]]; then
+                    manufacturer="hgst"
+                fi
+            fi
+        fi
+    fi
+    
+    echo "Drive Details:"
+    echo "  Device: $device"
+    echo "  Type: $drive_type"
+    echo "  Model: $model"
+    echo "  Current Firmware: $current_fw"
+    echo "  Manufacturer: $manufacturer"
+    echo ""
+    
+    # Provide update guidance based on manufacturer
+    case "$manufacturer" in
+        "samsung")
+            update_samsung_drive "$device" "$model" "$current_fw"
+            ;;
+        "intel")
+            update_intel_drive "$device" "$model" "$current_fw"
+            ;;
+        "wd")
+            update_wd_drive "$device" "$model" "$current_fw"
+            ;;
+        "seagate")
+            update_seagate_drive "$device" "$model" "$current_fw"
+            ;;
+        "crucial")
+            update_crucial_drive "$device" "$model" "$current_fw"
+            ;;
+        *)
+            update_generic_drive "$device" "$model" "$current_fw" "$drive_type"
+            ;;
+    esac
+}
+
+# Function to update Samsung drives
+update_samsung_drive() {
+    local device="$1"
+    local model="$2" 
+    local current_fw="$3"
+    
+    echo -e "${CYAN}Samsung Drive Update Process${NC}"
+    echo ""
+    
+    echo "Current firmware: $current_fw"
+    echo ""
+    echo "Samsung firmware update options:"
+    echo "1. Download firmware manually and use nvme-cli"
+    echo "2. Use Samsung Magician (if available for Linux)"
+    echo "3. Create bootable update media"
+    echo "4. Get firmware download links"
+    echo "5. Cancel"
+    echo ""
+    echo -n "Select update method (1-5): "
+    read -r method
+    
+    case "$method" in
+        1)
+            samsung_nvme_cli_update "$device" "$model"
+            ;;
+        2)
+            samsung_magician_update "$device" "$model"
+            ;;
+        3)
+            samsung_bootable_update "$device" "$model"
+            ;;
+        4)
+            samsung_download_links "$model"
+            ;;
+        5)
+            echo "Samsung update cancelled."
+            ;;
+        *)
+            echo "Invalid option."
+            ;;
+    esac
+}
+
+# Function for Samsung nvme-cli update
+samsung_nvme_cli_update() {
+    local device="$1"
+    local model="$2"
+    
+    echo -e "${BLUE}Samsung NVMe-CLI Update Process${NC}"
+    echo ""
+    echo "Steps to update firmware using nvme-cli:"
+    echo ""
+    echo "1. First, download the firmware:"
+    echo "   - Visit: https://semiconductor.samsung.com/consumer-storage/support/tools/"
+    echo "   - Search for your model: $model"
+    echo "   - Download firmware package"
+    echo ""
+    echo "2. Extract the firmware binary (.bin file)"
+    echo ""
+    echo "3. When ready, I'll help you apply the update"
+    echo ""
+    
+    if confirm_action "Do you have the firmware .bin file ready?"; then
+        echo ""
+        echo -n "Enter the full path to firmware .bin file: "
+        read -r firmware_path
+        
+        if [[ ! -f "$firmware_path" ]]; then
+            echo -e "${RED}Error: Firmware file not found: $firmware_path${NC}"
+            return 1
+        fi
+        
+        echo ""
+        echo -e "${RED}CRITICAL WARNING:${NC}"
+        echo "• Firmware update will begin - DO NOT interrupt or power off!"
+        echo "• Ensure UPS power backup if available"
+        echo "• Stop all VMs using this drive"
+        echo "• This process may take several minutes"
+        echo ""
+        
+        if confirm_action "Proceed with firmware update? This cannot be undone!"; then
+            log_message "INFO" "Starting Samsung firmware update for $device with $firmware_path"
+            
+            echo "Step 1: Downloading firmware to drive..."
+            if nvme fw-download "$device" --fw="$firmware_path"; then
+                echo -e "${GREEN}✓ Firmware download successful${NC}"
+                
+                echo ""
+                echo "Step 2: Committing firmware (this will reboot the drive)..."
+                if nvme fw-commit "$device" --slot=1 --action=1; then
+                    echo -e "${GREEN}✓ Firmware commit successful${NC}"
+                    echo ""
+                    echo -e "${YELLOW}Please reboot the system to complete the update.${NC}"
+                    echo "After reboot, run the scanner again to verify new firmware version."
+                    log_message "INFO" "Samsung firmware update completed successfully for $device"
+                else
+                    echo -e "${RED}✗ Firmware commit failed${NC}"
+                    log_message "ERROR" "Samsung firmware commit failed for $device"
+                fi
+            else
+                echo -e "${RED}✗ Firmware download failed${NC}"
+                log_message "ERROR" "Samsung firmware download failed for $device"
+            fi
+        fi
+    else
+        samsung_download_links "$model"
+    fi
+}
+
+# Function to provide Samsung download links
+samsung_download_links() {
+    local model="$1"
+    
+    echo -e "${BLUE}Samsung Firmware Download Information${NC}"
+    echo ""
+    echo "To download firmware for your $model:"
+    echo ""
+    echo "1. Visit: https://semiconductor.samsung.com/consumer-storage/support/tools/"
+    echo "2. Use the search or browse function"
+    echo "3. Look for your exact model: $model"
+    echo ""
+    echo "Common Samsung NVMe models and their firmware:"
+    echo "• 990 PRO series: Look for latest thermal/performance updates"
+    echo "• 980 PRO series: Performance optimization updates available"
+    echo "• 970 EVO/PRO series: Stability and compatibility updates"
+    echo ""
+    echo "Download the Linux version if available, or extract .bin from Windows package"
+    echo ""
+}
+
+# Function for other manufacturer updates (placeholder)
+update_intel_drive() {
+    local device="$1"
+    local model="$2"
+    local current_fw="$3"
+    
+    echo -e "${CYAN}Intel Drive Update Process${NC}"
+    echo ""
+    echo "Intel firmware update options:"
+    echo "1. Download Intel Memory and Storage Tool (intel-mas)"
+    echo "2. Manual firmware download and nvme-cli update"  
+    echo "3. Get download information"
+    echo ""
+    echo "Visit: https://www.intel.com/content/www/us/en/support/products/65296/memory-and-storage.html"
+    echo ""
+    echo "Note: Intel drives often require Intel's official tools for firmware updates."
+}
+
+update_wd_drive() {
+    local device="$1"
+    local model="$2"
+    local current_fw="$3"
+    
+    echo -e "${CYAN}Western Digital Drive Update Process${NC}"
+    echo ""
+    echo "WD firmware update information:"
+    echo "• Visit WD support site: https://support.wdc.com/"
+    echo "• Search for your model: $model"
+    echo "• Download WD Dashboard or specific firmware updater"
+    echo ""
+    echo "Current firmware: $current_fw"
+    echo ""
+    echo "Note: WD updates often require Windows environment or bootable media."
+}
+
+update_seagate_drive() {
+    local device="$1"
+    local model="$2"
+    local current_fw="$3"
+    
+    echo -e "${CYAN}Seagate Drive Update Process${NC}"
+    echo ""
+    echo "Seagate firmware update information:"
+    echo "• Use SeaTools for Linux if available"
+    echo "• Visit: https://www.seagate.com/support/downloads/seatools/"
+    echo "• Search for model-specific firmware: $model"
+    echo ""
+    echo "Current firmware: $current_fw"
+}
+
+update_crucial_drive() {
+    local device="$1"
+    local model="$2"
+    local current_fw="$3"
+    
+    echo -e "${CYAN}Crucial/Micron Drive Update Process${NC}"
+    echo ""
+    echo "Crucial firmware update information:"
+    echo "• Use Crucial Storage Executive (check Linux compatibility)"
+    echo "• Visit: https://www.crucial.com/support/storage-executive"
+    echo "• Search for firmware for: $model"
+    echo ""
+    echo "Current firmware: $current_fw"
+}
+
+update_generic_drive() {
+    local device="$1"
+    local model="$2"
+    local current_fw="$3"
+    local drive_type="$4"
+    
+    echo -e "${CYAN}Generic Drive Update Process${NC}"
+    echo ""
+    echo "For unknown or generic drives:"
+    echo "• Search manufacturer website for: $model"
+    echo "• Current firmware: $current_fw"
+    echo "• Drive type: $drive_type"
+    echo ""
+    echo "General approaches:"
+    echo "1. Visit manufacturer's support website"
+    echo "2. Search for firmware updates using exact model number"
+    echo "3. Look for Linux-compatible update tools"
+    echo "4. Consider bootable update media if available"
+}
+
+# Placeholder functions for Samsung methods
+samsung_magician_update() {
+    local device="$1"
+    local model="$2"
+    
+    echo -e "${BLUE}Samsung Magician Update${NC}"
+    echo ""
+    echo "Samsung Magician for Linux (if available):"
+    echo "1. Check Samsung's website for Linux version"
+    echo "2. Install Samsung Magician"
+    echo "3. Run firmware update through the GUI"
+    echo ""
+    echo "Note: Samsung Magician may not be available for all Linux distributions."
+    echo "Consider using nvme-cli method or bootable media instead."
+}
+
+samsung_bootable_update() {
+    local device="$1"
+    local model="$2"
+    
+    echo -e "${BLUE}Samsung Bootable Update Media${NC}"
+    echo ""
+    echo "Creating bootable Samsung firmware updater:"
+    echo "1. Download Samsung firmware ISO/updater"
+    echo "2. Create bootable USB: dd if=samsung_updater.iso of=/dev/sdX bs=4M"
+    echo "3. Boot from USB and follow updater instructions"
+    echo ""
+    echo "This is the safest method for production systems."
+}
+
+# Function to confirm action with default
+confirm_action() {
+    local message="$1"
+    echo -e "${YELLOW}$message${NC}"
+    echo -n "Continue? [y/N]: "
+    read -r response
+    
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 # Function to provide quick scan mode
 quick_scan() {
     echo -e "${CYAN}=== Quick Firmware Scan ===${NC}"
@@ -532,9 +968,9 @@ quick_scan() {
 
 # Main function
 main() {
-    local scan_mode="${1:-full}"
+    local mode="${1:-menu}"
     
-    echo -e "${CYAN}=== Proxmox Firmware Scanner ===${NC}"
+    echo -e "${CYAN}=== Proxmox Firmware Manager ===${NC}"
     echo ""
     
     # Check if running as root
@@ -542,57 +978,152 @@ main() {
     
     # Create log file
     touch "$LOG_FILE"
-    log_message "INFO" "Firmware scan started - mode: $scan_mode"
     
-    if [[ "$scan_mode" == "quick" ]]; then
-        quick_scan
-    else
-        # Full scan mode
-        check_required_tools
-        scan_storage_overview
-        scan_nvme_drives
-        scan_sata_hdd_drives
-        check_firmware_update_resources
-        provide_manufacturer_guidance
-        analyze_firmware_status
-        generate_report
-        
-        echo -e "${GREEN}Firmware scan completed!${NC}"
-        echo "Check the detailed report at: $REPORT_FILE"
-        echo "Log file: $LOG_FILE"
-    fi
+    case "$mode" in
+        "scan"|"full")
+            log_message "INFO" "Firmware scan started - full mode"
+            # Full scan mode
+            check_required_tools
+            scan_storage_overview
+            scan_nvme_drives
+            scan_sata_hdd_drives
+            check_firmware_update_resources
+            provide_manufacturer_guidance
+            analyze_firmware_status
+            generate_report
+            
+            echo -e "${GREEN}Firmware scan completed!${NC}"
+            echo "Check the detailed report at: $REPORT_FILE"
+            echo "Log file: $LOG_FILE"
+            log_message "INFO" "Firmware scan completed"
+            ;;
+        "quick")
+            log_message "INFO" "Firmware scan started - quick mode"
+            quick_scan
+            log_message "INFO" "Quick firmware scan completed"
+            ;;
+        "update"|"updater")
+            log_message "INFO" "Interactive firmware updater started"
+            interactive_firmware_updater
+            log_message "INFO" "Interactive firmware updater completed"
+            ;;
+        "menu"|*)
+            # Interactive menu mode
+            show_main_menu
+            ;;
+    esac
+}
+
+# Function to show main menu
+show_main_menu() {
+    echo "Proxmox Firmware Management Tool"
+    echo ""
+    echo "What would you like to do?"
+    echo ""
+    echo "1. Scan for firmware versions and get update guidance"
+    echo "2. Interactive firmware updater (update selected drives)"
+    echo "3. Quick scan (firmware versions only)"
+    echo "4. Exit"
+    echo ""
+    echo -n "Select option (1-4): "
+    read -r choice
     
-    log_message "INFO" "Firmware scan completed"
+    case "$choice" in
+        1)
+            echo ""
+            echo -e "${BLUE}Starting firmware scan...${NC}"
+            echo ""
+            log_message "INFO" "Firmware scan started from menu - full mode"
+            
+            check_required_tools
+            scan_storage_overview
+            scan_nvme_drives
+            scan_sata_hdd_drives
+            check_firmware_update_resources
+            provide_manufacturer_guidance
+            analyze_firmware_status
+            generate_report
+            
+            echo -e "${GREEN}Firmware scan completed!${NC}"
+            echo "Check the detailed report at: $REPORT_FILE"
+            echo "Log file: $LOG_FILE"
+            log_message "INFO" "Firmware scan completed"
+            ;;
+        2)
+            echo ""
+            echo -e "${BLUE}Starting interactive firmware updater...${NC}"
+            echo ""
+            log_message "INFO" "Interactive firmware updater started from menu"
+            interactive_firmware_updater
+            log_message "INFO" "Interactive firmware updater completed"
+            ;;
+        3)
+            echo ""
+            echo -e "${BLUE}Starting quick scan...${NC}"
+            echo ""
+            log_message "INFO" "Quick firmware scan started from menu"
+            quick_scan
+            log_message "INFO" "Quick firmware scan completed"
+            ;;
+        4)
+            echo "Exiting firmware manager."
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Invalid option. Please select 1-4.${NC}"
+            exit 1
+            ;;
+    esac
 }
 
 # Show usage if help is requested
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: $0 [mode]"
     echo ""
-    echo "Proxmox Firmware Scanner"
-    echo "Scans for NVMe and HDD firmware versions and provides update guidance"
+    echo "Proxmox Firmware Manager"
+    echo "Comprehensive tool for scanning and updating NVMe and HDD firmware"
     echo ""
     echo "Modes:"
-    echo "  (no args)  - Full scan with detailed analysis and recommendations"
-    echo "  full       - Full scan with detailed analysis and recommendations"
-    echo "  quick      - Quick scan showing only current firmware versions"
+    echo "  (no args)      - Interactive menu with all options"
+    echo "  menu           - Interactive menu with all options"
+    echo "  scan / full    - Full scan with detailed analysis and recommendations"
+    echo "  quick          - Quick scan showing only current firmware versions"
+    echo "  update         - Interactive firmware updater for selected drives"
+    echo "  updater        - Interactive firmware updater for selected drives"
     echo ""
-    echo "The script will:"
-    echo "  - Detect NVMe and SATA/HDD drives"
-    echo "  - Report current firmware versions"
-    echo "  - Provide manufacturer-specific update guidance"
-    echo "  - Generate detailed report with recommendations"
+    echo "Features:"
+    echo "  Option 1: Firmware Scanner"
+    echo "    - Detect NVMe and SATA/HDD drives"
+    echo "    - Report current firmware versions"
+    echo "    - Provide manufacturer-specific update guidance"
+    echo "    - Generate detailed report with recommendations"
+    echo ""
+    echo "  Option 2: Interactive Firmware Updater"
+    echo "    - List all detected drives with current firmware"
+    echo "    - Select specific drive to update"
+    echo "    - Guided update process with safety checks"
+    echo "    - Manufacturer-specific update procedures"
+    echo "    - Built-in Samsung NVMe update support with nvme-cli"
     echo ""
     echo "Output files:"
     echo "  Report: $REPORT_FILE"
     echo "  Log: $LOG_FILE"
     echo ""
     echo "Examples:"
-    echo "  $0           # Full scan"
-    echo "  $0 full      # Full scan"
-    echo "  $0 quick     # Quick firmware version check"
+    echo "  $0              # Interactive menu"
+    echo "  $0 menu         # Interactive menu"
+    echo "  $0 scan         # Full firmware scan only"
+    echo "  $0 quick        # Quick firmware version check"
+    echo "  $0 update       # Interactive firmware updater"
+    echo ""
+    echo "Samsung NVMe Update Support:"
+    echo "  - Automatic Samsung drive detection"
+    echo "  - Multiple update methods (nvme-cli, Magician, bootable)"
+    echo "  - Step-by-step guided updates with safety checks"
+    echo "  - Support for 990 PRO, 980 PRO and other Samsung NVMe drives"
     echo ""
     echo "Note: This script requires root privileges to access drive information"
+    echo "      Firmware updates are potentially risky - always backup data first!"
     exit 0
 fi
 
