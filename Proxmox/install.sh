@@ -53,6 +53,7 @@ check_for_updates() {
     
     local console_files=(
         "console-fix.sh"
+        "subscription-popup-fix.sh"
     )
     
     local root_expansion_files=(
@@ -266,6 +267,7 @@ download_scripts() {
     
     local console_files=(
         "console-fix.sh"
+        "subscription-popup-fix.sh"
     )
     
     local root_expansion_files=(
@@ -452,6 +454,13 @@ install_scripts() {
             ln -sf "$INSTALL_DIR/console-fix.sh" "$INSTALL_DIR/console-fix"
             ((installed_count++))
         fi
+        
+        if [[ -f "subscription-popup-fix.sh" ]]; then
+            cp subscription-popup-fix.sh "$INSTALL_DIR/subscription-popup-fix.sh"
+            chmod +x "$INSTALL_DIR/subscription-popup-fix.sh"
+            ln -sf "$INSTALL_DIR/subscription-popup-fix.sh" "$INSTALL_DIR/subscription-popup-fix"
+            ((installed_count++))
+        fi
     fi
     
     # Install root filesystem expansion script
@@ -489,6 +498,7 @@ install_scripts() {
     [[ -f "$INSTALL_DIR/storage-cleanup.sh" ]] && echo "    ✓ storage-cleanup.sh -> $INSTALL_DIR/storage-cleanup.sh"
     [[ -f "$INSTALL_DIR/storage-config-fix.sh" ]] && echo "    ✓ storage-config-fix.sh -> $INSTALL_DIR/storage-config-fix.sh"
     [[ -f "$INSTALL_DIR/console-fix.sh" ]] && echo "    ✓ console-fix.sh -> $INSTALL_DIR/console-fix.sh"
+    [[ -f "$INSTALL_DIR/subscription-popup-fix.sh" ]] && echo "    ✓ subscription-popup-fix.sh -> $INSTALL_DIR/subscription-popup-fix.sh"
     [[ -f "$INSTALL_DIR/root-filesystem-expand.sh" ]] && echo "    ✓ root-filesystem-expand.sh -> $INSTALL_DIR/root-filesystem-expand.sh"
     [[ -f "$INSTALL_DIR/firmware-scanner.sh" ]] && echo "    ✓ firmware-scanner.sh -> $INSTALL_DIR/firmware-scanner.sh"
     echo "  Symlinks created for all installed scripts"
