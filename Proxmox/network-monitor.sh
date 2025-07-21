@@ -8,7 +8,7 @@
 LOG_FILE="/var/log/network-monitor.log"
 PING_TARGET="8.8.8.8"
 PING_TIMEOUT=5
-CHECK_INTERVAL=300  # 5 minutes
+CHECK_INTERVAL=30  # 30 Seconds
 MAX_FAILURES=2      # Require 2 consecutive failures before attempting fix
 FIX_SCRIPT="/usr/local/bin/fix-network.sh"
 
