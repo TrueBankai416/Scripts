@@ -632,8 +632,8 @@ main() {
                     echo "Enterprise repository disabled, no-subscription repository enabled."
                     echo "You can now update packages without subscription warnings."
                     echo ""
-                    echo "To check status: sudo $(basename "$0") --status"
-                    echo "To restore: sudo $(basename "$0") --restore"
+                    echo "To check status: sudo ./subscription-popup-fix.sh --status"
+                    echo "To restore: sudo ./subscription-popup-fix.sh --restore"
                 else
                     echo ""
                     echo -e "${RED}=== Repository Configuration Failed! ===${NC}"
@@ -734,10 +734,10 @@ main() {
             echo "  - Running apt update/upgrade commands"
             echo ""
             echo "To restore original settings:"
-            echo "  sudo $(basename "$0") --restore"
+            echo "  sudo ./subscription-popup-fix.sh --restore"
             echo ""
             echo "To check status:"
-            echo "  sudo $(basename "$0") --status"
+            echo "  sudo ./subscription-popup-fix.sh --status"
         elif [[ "$popup_success" == true ]]; then
             echo -e "${GREEN}=== Partial Success ===${NC}"
             echo "✓ Subscription popup disabled"
