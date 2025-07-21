@@ -878,6 +878,134 @@ test_installation() {
         fi
     fi
     
+    # Test console scripts
+    if [[ "$script_type" == "all" || "$script_type" == "console" ]]; then
+        ((tests_total++))
+        if [[ -x "console-fix.sh" ]]; then
+            print_status "$GREEN" "✓ console-fix.sh is executable"
+            ((tests_passed++))
+        elif [[ -x "$INSTALL_DIR/console-fix.sh" ]]; then
+            print_status "$GREEN" "✓ console-fix.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ console-fix.sh is not executable (may not be installed)"
+        fi
+        
+        ((tests_total++))
+        if [[ -x "subscription-popup-fix.sh" ]]; then
+            print_status "$GREEN" "✓ subscription-popup-fix.sh is executable"
+            ((tests_passed++))
+        elif [[ -x "$INSTALL_DIR/subscription-popup-fix.sh" ]]; then
+            print_status "$GREEN" "✓ subscription-popup-fix.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ subscription-popup-fix.sh is not executable (may not be installed)"
+        fi
+        
+        # Test help commands for console scripts
+        if [[ -x "console-fix.sh" ]]; then
+            ((tests_total++))
+            if ./console-fix.sh --help &>/dev/null; then
+                print_status "$GREEN" "✓ console-fix help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ console-fix help failed"
+            fi
+        elif [[ -x "$INSTALL_DIR/console-fix.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/console-fix.sh" --help &>/dev/null; then
+                print_status "$GREEN" "✓ console-fix help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ console-fix help failed"
+            fi
+        fi
+        
+        if [[ -x "subscription-popup-fix.sh" ]]; then
+            ((tests_total++))
+            if ./subscription-popup-fix.sh --help &>/dev/null; then
+                print_status "$GREEN" "✓ subscription-popup-fix help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ subscription-popup-fix help failed"
+            fi
+        elif [[ -x "$INSTALL_DIR/subscription-popup-fix.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/subscription-popup-fix.sh" --help &>/dev/null; then
+                print_status "$GREEN" "✓ subscription-popup-fix help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ subscription-popup-fix help failed"
+            fi
+        fi
+    fi
+    
+    # Test root filesystem expansion script
+    if [[ "$script_type" == "all" || "$script_type" == "root" ]]; then
+        ((tests_total++))
+        if [[ -x "root-filesystem-expand.sh" ]]; then
+            print_status "$GREEN" "✓ root-filesystem-expand.sh is executable"
+            ((tests_passed++))
+        elif [[ -x "$INSTALL_DIR/root-filesystem-expand.sh" ]]; then
+            print_status "$GREEN" "✓ root-filesystem-expand.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ root-filesystem-expand.sh is not executable (may not be installed)"
+        fi
+        
+        # Test help command for root filesystem expansion script
+        if [[ -x "root-filesystem-expand.sh" ]]; then
+            ((tests_total++))
+            if ./root-filesystem-expand.sh --help &>/dev/null; then
+                print_status "$GREEN" "✓ root-filesystem-expand help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ root-filesystem-expand help failed"
+            fi
+        elif [[ -x "$INSTALL_DIR/root-filesystem-expand.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/root-filesystem-expand.sh" --help &>/dev/null; then
+                print_status "$GREEN" "✓ root-filesystem-expand help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ root-filesystem-expand help failed"
+            fi
+        fi
+    fi
+    
+    # Test firmware scanner script
+    if [[ "$script_type" == "all" || "$script_type" == "firmware" ]]; then
+        ((tests_total++))
+        if [[ -x "firmware-scanner.sh" ]]; then
+            print_status "$GREEN" "✓ firmware-scanner.sh is executable"
+            ((tests_passed++))
+        elif [[ -x "$INSTALL_DIR/firmware-scanner.sh" ]]; then
+            print_status "$GREEN" "✓ firmware-scanner.sh is executable"
+            ((tests_passed++))
+        else
+            print_status "$YELLOW" "⚠ firmware-scanner.sh is not executable (may not be installed)"
+        fi
+        
+        # Test help command for firmware scanner script
+        if [[ -x "firmware-scanner.sh" ]]; then
+            ((tests_total++))
+            if ./firmware-scanner.sh --help &>/dev/null; then
+                print_status "$GREEN" "✓ firmware-scanner help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ firmware-scanner help failed"
+            fi
+        elif [[ -x "$INSTALL_DIR/firmware-scanner.sh" ]]; then
+            ((tests_total++))
+            if "$INSTALL_DIR/firmware-scanner.sh" --help &>/dev/null; then
+                print_status "$GREEN" "✓ firmware-scanner help works"
+                ((tests_passed++))
+            else
+                print_status "$RED" "✗ firmware-scanner help failed"
+            fi
+        fi
+    fi
+    
     echo ""
     print_status "$BLUE" "Test Summary: $tests_passed/$tests_total tests passed"
     
@@ -903,8 +1031,9 @@ main() {
     # Define files needed based on script type
     local network_files=("fix-network.sh" "network-monitor.sh" "network-fix.service")
     local storage_files=("storage-analyzer.sh" "storage-cleanup.sh" "storage-config-fix.sh")
-    local console_files=("console-fix.sh")
+    local console_files=("console-fix.sh" "subscription-popup-fix.sh")
     local root_files=("root-filesystem-expand.sh")
+    local firmware_files=("firmware-scanner.sh")
     local required_files=()
     
     case "$script_type" in
@@ -924,8 +1053,12 @@ main() {
             required_files=("${root_files[@]}")
             print_status "$YELLOW" "Installing root filesystem expansion tool only..."
             ;;
+        "firmware")
+            required_files=("${firmware_files[@]}")
+            print_status "$YELLOW" "Installing firmware scanner tool only..."
+            ;;
         "all"|*)
-            required_files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_files[@]}")
+            required_files=("${network_files[@]}" "${storage_files[@]}" "${console_files[@]}" "${root_files[@]}" "${firmware_files[@]}")
             print_status "$YELLOW" "Installing all tools..."
             ;;
     esac
