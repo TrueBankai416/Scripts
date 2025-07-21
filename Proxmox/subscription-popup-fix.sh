@@ -62,26 +62,35 @@ show_help() {
     echo "DESCRIPTION:"
     echo "    This script removes the 'no valid subscription' popup warning"
     echo "    that appears when logging into Proxmox web interface without"
-    echo "    an enterprise subscription."
+    echo "    an enterprise subscription. It also configures repositories to"
+    echo "    use the free no-subscription repository instead of enterprise."
     echo ""
     echo "USAGE:"
     echo "    sudo ./subscription-popup-fix.sh [OPTION]"
     echo ""
     echo "OPTIONS:"
     echo "    --help          Show this help message"
-    echo "    --status        Check if popup is currently disabled"
-    echo "    --restore       Restore original popup functionality"
+    echo "    --status        Check popup and repository status"
+    echo "    --restore       Restore original popup and repositories"
     echo "    --backup        Create backup only (no modification)"
+    echo "    --repo-only     Configure repositories only (no popup changes)"
     echo ""
     echo "EXAMPLES:"
-    echo "    sudo ./subscription-popup-fix.sh           # Remove popup with confirmation"
+    echo "    sudo ./subscription-popup-fix.sh           # Remove popup and configure repos"
     echo "    sudo ./subscription-popup-fix.sh --status  # Check current status"
-    echo "    sudo ./subscription-popup-fix.sh --restore # Restore original popup"
+    echo "    sudo ./subscription-popup-fix.sh --restore # Restore everything"
+    echo "    sudo ./subscription-popup-fix.sh --repo-only # Fix repositories only"
+    echo ""
+    echo "WHAT IT DOES:"
+    echo "    - Disables subscription popup warning"
+    echo "    - Disables enterprise repository (pve-enterprise)"
+    echo "    - Enables no-subscription repository (pve-no-subscription)"
+    echo "    - Creates backups for easy restoration"
     echo ""
     echo "SAFETY:"
     echo "    - Creates automatic backups before any changes"
     echo "    - Changes can be reverted with --restore option"
-    echo "    - Only modifies JavaScript files, no system changes"
+    echo "    - Repository changes are reversible"
     echo ""
 }
 
@@ -157,6 +166,9 @@ create_backup() {
     
     if [[ ! -f "$backup_file" ]]; then
         if cp "$js_file" "$backup_file"; then
+            # Ensure backup has correct permissions for future restoration
+            chmod 644 "$backup_file"
+            chown root:root "$backup_file"
             echo -e "${GREEN}✓ Created backup: $backup_file${NC}"
             log_message "INFO" "Created backup: $backup_file"
             return 0
@@ -214,6 +226,9 @@ void(0);' "$js_file" > "$temp_file"
         
         if [[ -s "$temp_file" ]]; then
             if mv "$temp_file" "$js_file"; then
+                # Fix file permissions (mv doesn't preserve permissions)
+                chmod 644 "$js_file"
+                chown root:root "$js_file"
                 echo -e "${GREEN}✓ Successfully disabled subscription popup${NC}"
                 log_message "INFO" "Successfully disabled subscription popup"
             else
@@ -232,6 +247,9 @@ void(0);' "$js_file" > "$temp_file"
         # Method 2: More targeted approach - replace specific function calls
         if sed -i.tmp 's/Ext\.Msg\.show({[^}]*No valid subscription[^}]*});/\/\/ POPUP DISABLED - subscription check removed/g' "$js_file"; then
             rm -f "$js_file.tmp"
+            # Ensure correct permissions after sed modification
+            chmod 644 "$js_file"
+            chown root:root "$js_file"
             echo -e "${GREEN}✓ Successfully disabled subscription popup${NC}"
             log_message "INFO" "Successfully disabled subscription popup using targeted replacement"
         else
@@ -277,6 +295,9 @@ restore_subscription_popup() {
     
     if confirm_action "Restore original subscription popup from backup"; then
         if cp "$backup_file" "$js_file"; then
+            # Ensure correct permissions after restoration
+            chmod 644 "$js_file"
+            chown root:root "$js_file"
             echo -e "${GREEN}✓ Original subscription popup restored${NC}"
             log_message "INFO" "Original subscription popup restored from backup"
             
@@ -295,6 +316,207 @@ restore_subscription_popup() {
             log_message "ERROR" "Failed to restore from backup"
             return 1
         fi
+    fi
+}
+
+# Function to check repository status
+check_repository_status() {
+    echo -e "${BLUE}=== Checking Repository Configuration ===${NC}"
+    
+    local enterprise_repo="/etc/apt/sources.list.d/pve-enterprise.list"
+    local no_sub_repo="/etc/apt/sources.list.d/pve-no-subscription.list"
+    
+    # Check enterprise repository
+    if [[ -f "$enterprise_repo" ]]; then
+        if grep -q "^deb" "$enterprise_repo" 2>/dev/null; then
+            echo -e "${YELLOW}⚠ Enterprise repository is ENABLED${NC}"
+            echo "  File: $enterprise_repo"
+            log_message "INFO" "Enterprise repository is enabled"
+        else
+            echo -e "${GREEN}✓ Enterprise repository is DISABLED${NC}"
+            echo "  File: $enterprise_repo"
+        fi
+    else
+        echo -e "${CYAN}  Enterprise repository file not found${NC}"
+    fi
+    
+    # Check no-subscription repository
+    if [[ -f "$no_sub_repo" ]]; then
+        if grep -q "^deb" "$no_sub_repo" 2>/dev/null; then
+            echo -e "${GREEN}✓ No-subscription repository is ENABLED${NC}"
+            echo "  File: $no_sub_repo"
+            log_message "INFO" "No-subscription repository is enabled"
+            return 0
+        else
+            echo -e "${YELLOW}⚠ No-subscription repository is DISABLED${NC}"
+            echo "  File: $no_sub_repo"
+        fi
+    else
+        echo -e "${YELLOW}⚠ No-subscription repository is NOT CONFIGURED${NC}"
+    fi
+    
+    return 1
+}
+
+# Function to backup repository files
+backup_repository_files() {
+    echo -e "${CYAN}Creating repository backups...${NC}"
+    
+    mkdir -p "$BACKUP_DIR"
+    
+    local enterprise_repo="/etc/apt/sources.list.d/pve-enterprise.list"
+    local no_sub_repo="/etc/apt/sources.list.d/pve-no-subscription.list"
+    
+    if [[ -f "$enterprise_repo" ]]; then
+        local backup_file="$BACKUP_DIR/pve-enterprise.list.backup"
+        if [[ ! -f "$backup_file" ]]; then
+            if cp "$enterprise_repo" "$backup_file"; then
+                echo -e "${GREEN}✓ Backed up enterprise repository${NC}"
+                log_message "INFO" "Backed up enterprise repository to $backup_file"
+            fi
+        fi
+    fi
+    
+    if [[ -f "$no_sub_repo" ]]; then
+        local backup_file="$BACKUP_DIR/pve-no-subscription.list.backup"
+        if [[ ! -f "$backup_file" ]]; then
+            if cp "$no_sub_repo" "$backup_file"; then
+                echo -e "${GREEN}✓ Backed up no-subscription repository${NC}"
+                log_message "INFO" "Backed up no-subscription repository to $backup_file"
+            fi
+        fi
+    fi
+}
+
+# Function to configure repositories for no-subscription use
+configure_repositories() {
+    echo -e "${BLUE}=== Configuring Repositories ===${NC}"
+    
+    # Backup existing repository files
+    backup_repository_files
+    
+    local enterprise_repo="/etc/apt/sources.list.d/pve-enterprise.list"
+    local no_sub_repo="/etc/apt/sources.list.d/pve-no-subscription.list"
+    
+    # Get Proxmox version to determine correct repository
+    local pve_version=$(pveversion | grep "pve-manager" | cut -d'/' -f2 | cut -d'-' -f1 | cut -d'.' -f1)
+    local debian_codename
+    
+    # Determine Debian codename based on Proxmox version
+    case "$pve_version" in
+        8|"")
+            debian_codename="bookworm"
+            ;;
+        7)
+            debian_codename="bullseye"
+            ;;
+        6)
+            debian_codename="buster"
+            ;;
+        *)
+            echo -e "${YELLOW}⚠ Unknown Proxmox version, defaulting to bookworm${NC}"
+            debian_codename="bookworm"
+            ;;
+    esac
+    
+    echo "Detected Proxmox version: $pve_version (Debian: $debian_codename)"
+    
+    # Disable enterprise repository
+    if [[ -f "$enterprise_repo" ]]; then
+        echo "Disabling enterprise repository..."
+        if sed -i 's/^deb/#deb/g' "$enterprise_repo"; then
+            echo -e "${GREEN}✓ Enterprise repository disabled${NC}"
+            log_message "INFO" "Enterprise repository disabled"
+        else
+            echo -e "${YELLOW}⚠ Failed to disable enterprise repository${NC}"
+            log_message "WARN" "Failed to disable enterprise repository"
+        fi
+    else
+        echo -e "${CYAN}  Enterprise repository not found, creating disabled version${NC}"
+        cat > "$enterprise_repo" << EOF
+# deb https://enterprise.proxmox.com/debian/pve $debian_codename pve-enterprise
+# This repository is disabled by subscription-popup-fix script
+# To enable, remove the # at the beginning of the line above
+EOF
+        echo -e "${GREEN}✓ Created disabled enterprise repository${NC}"
+    fi
+    
+    # Enable/create no-subscription repository
+    echo "Configuring no-subscription repository..."
+    cat > "$no_sub_repo" << EOF
+# No-subscription repository for Proxmox VE
+deb http://download.proxmox.com/debian/pve $debian_codename pve-no-subscription
+EOF
+    
+    if [[ $? -eq 0 ]]; then
+        echo -e "${GREEN}✓ No-subscription repository enabled${NC}"
+        log_message "INFO" "No-subscription repository enabled for $debian_codename"
+    else
+        echo -e "${RED}✗ Failed to configure no-subscription repository${NC}"
+        log_message "ERROR" "Failed to configure no-subscription repository"
+        return 1
+    fi
+    
+    # Update package lists
+    echo "Updating package lists..."
+    if apt update -qq 2>/dev/null; then
+        echo -e "${GREEN}✓ Package lists updated successfully${NC}"
+        log_message "INFO" "Package lists updated after repository configuration"
+    else
+        echo -e "${YELLOW}⚠ Package list update had warnings (this is normal)${NC}"
+        log_message "WARN" "Package list update completed with warnings"
+    fi
+    
+    return 0
+}
+
+# Function to restore original repositories
+restore_repositories() {
+    echo -e "${BLUE}=== Restoring Original Repositories ===${NC}"
+    
+    local enterprise_backup="$BACKUP_DIR/pve-enterprise.list.backup"
+    local no_sub_backup="$BACKUP_DIR/pve-no-subscription.list.backup"
+    local enterprise_repo="/etc/apt/sources.list.d/pve-enterprise.list"
+    local no_sub_repo="/etc/apt/sources.list.d/pve-no-subscription.list"
+    
+    local restored=false
+    
+    # Restore enterprise repository
+    if [[ -f "$enterprise_backup" ]]; then
+        if cp "$enterprise_backup" "$enterprise_repo"; then
+            echo -e "${GREEN}✓ Restored enterprise repository${NC}"
+            log_message "INFO" "Restored enterprise repository from backup"
+            restored=true
+        fi
+    else
+        echo -e "${YELLOW}⚠ No enterprise repository backup found${NC}"
+    fi
+    
+    # Restore no-subscription repository
+    if [[ -f "$no_sub_backup" ]]; then
+        if cp "$no_sub_backup" "$no_sub_repo"; then
+            echo -e "${GREEN}✓ Restored no-subscription repository${NC}"
+            log_message "INFO" "Restored no-subscription repository from backup"
+            restored=true
+        fi
+    else
+        # If no backup exists, remove the file we created
+        if [[ -f "$no_sub_repo" ]] && grep -q "subscription-popup-fix script" "$no_sub_repo" 2>/dev/null; then
+            rm -f "$no_sub_repo"
+            echo -e "${GREEN}✓ Removed configured no-subscription repository${NC}"
+            log_message "INFO" "Removed no-subscription repository (no backup existed)"
+            restored=true
+        fi
+    fi
+    
+    if [[ "$restored" == true ]]; then
+        echo "Updating package lists..."
+        apt update -qq 2>/dev/null
+        echo -e "${GREEN}✓ Package lists updated${NC}"
+        return 0
+    else
+        echo -e "${YELLOW}⚠ No repository changes to restore${NC}"
+        return 1
     fi
 }
 
@@ -328,18 +550,61 @@ main() {
             check_root
             check_proxmox
             display_system_info
+            echo ""
             check_popup_status
-            exit $?
+            local popup_result=$?
+            echo ""
+            check_repository_status
+            local repo_result=$?
+            if [[ $popup_result -eq 0 && $repo_result -eq 0 ]]; then
+                exit 0
+            else
+                exit 1
+            fi
             ;;
         --restore)
             check_root
             check_proxmox
-            restore_subscription_popup
-            exit $?
+            echo "This will restore both popup and repository settings from backups."
+            echo ""
+            if confirm_action "Restore original subscription popup and repositories"; then
+                local popup_restored=false
+                local repo_restored=false
+                
+                # Restore popup
+                if restore_subscription_popup; then
+                    popup_restored=true
+                fi
+                
+                echo ""
+                # Restore repositories  
+                if restore_repositories; then
+                    repo_restored=true
+                fi
+                
+                echo ""
+                if [[ "$popup_restored" == true && "$repo_restored" == true ]]; then
+                    echo -e "${GREEN}=== Complete Restore Successful! ===${NC}"
+                    echo "Both popup and repositories have been restored to original state."
+                elif [[ "$popup_restored" == true ]]; then
+                    echo -e "${GREEN}=== Popup Restored ===${NC}"
+                    echo -e "${YELLOW}Repository restoration had issues (see above)${NC}"
+                elif [[ "$repo_restored" == true ]]; then
+                    echo -e "${GREEN}=== Repositories Restored ===${NC}"
+                    echo -e "${YELLOW}Popup restoration had issues (see above)${NC}"
+                else
+                    echo -e "${YELLOW}=== Restore Had Issues ===${NC}"
+                    echo "Check the messages above for details."
+                fi
+            fi
+            exit 0
             ;;
         --backup)
             check_root
             check_proxmox
+            echo "Creating backups of JavaScript files and repositories..."
+            echo ""
+            
             local js_file
             js_file=$(find_proxmox_js_path)
             if [[ -n "$js_file" ]]; then
@@ -348,10 +613,38 @@ main() {
                 echo -e "${RED}✗ Could not find Proxmox JavaScript files${NC}"
                 exit 1
             fi
-            exit $?
+            
+            backup_repository_files
+            echo -e "${GREEN}✓ Backup completed${NC}"
+            exit 0
+            ;;
+        --repo-only)
+            check_root
+            check_proxmox
+            display_system_info
+            echo ""
+            check_repository_status
+            echo ""
+            if confirm_action "Configure repositories for no-subscription use (disable enterprise, enable no-subscription)"; then
+                if configure_repositories; then
+                    echo ""
+                    echo -e "${GREEN}=== Repository Configuration Complete! ===${NC}"
+                    echo "Enterprise repository disabled, no-subscription repository enabled."
+                    echo "You can now update packages without subscription warnings."
+                    echo ""
+                    echo "To check status: sudo $(basename "$0") --status"
+                    echo "To restore: sudo $(basename "$0") --restore"
+                else
+                    echo ""
+                    echo -e "${RED}=== Repository Configuration Failed! ===${NC}"
+                    echo "Check the messages above for details."
+                    exit 1
+                fi
+            fi
+            exit 0
             ;;
         "")
-            # Default action - disable popup
+            # Default action - disable popup and configure repos
             ;;
         *)
             echo -e "${RED}Error: Unknown option '$1'${NC}"
@@ -367,37 +660,98 @@ main() {
     # Display system information
     display_system_info
     
-    # Check current status
-    local status_result
+    # Check current popup status
+    echo ""
+    local popup_status_result
     check_popup_status
-    status_result=$?
+    popup_status_result=$?
     
-    if [[ $status_result -eq 0 ]]; then
-        echo -e "${CYAN}The subscription popup is already disabled.${NC}"
-        echo "Use --restore to re-enable it, or --status to check again."
+    # Check repository status
+    echo ""
+    local repo_status_result
+    check_repository_status
+    repo_status_result=$?
+    
+    # Determine what needs to be done
+    local popup_needs_fix=$([[ $popup_status_result -ne 0 ]] && echo true || echo false)
+    local repo_needs_fix=$([[ $repo_status_result -ne 0 ]] && echo true || echo false)
+    
+    echo ""
+    if [[ "$popup_needs_fix" == false && "$repo_needs_fix" == false ]]; then
+        echo -e "${GREEN}=== Everything Already Configured! ===${NC}"
+        echo "✓ Subscription popup is already disabled"
+        echo "✓ Repositories are already configured for no-subscription use"
+        echo ""
+        echo "Use --status to check current status"
+        echo "Use --restore to restore original settings"
         exit 0
-    elif [[ $status_result -eq 1 ]]; then
-        echo -e "${RED}Unable to determine popup status. Continuing anyway...${NC}"
+    fi
+    
+    # Show what will be done
+    echo -e "${BLUE}=== Configuration Summary ===${NC}"
+    if [[ "$popup_needs_fix" == true ]]; then
+        echo "Will disable subscription popup warning"
+    else
+        echo "✓ Subscription popup already disabled"
+    fi
+    
+    if [[ "$repo_needs_fix" == true ]]; then
+        echo "Will disable enterprise repository and enable no-subscription repository"
+    else
+        echo "✓ Repositories already configured correctly"
     fi
     
     echo ""
-    if confirm_action "Disable the 'No valid subscription' popup warning"; then
-        if disable_subscription_popup; then
+    if confirm_action "Apply these changes"; then
+        local popup_success=true
+        local repo_success=true
+        
+        # Disable popup if needed
+        if [[ "$popup_needs_fix" == true ]]; then
             echo ""
-            echo -e "${GREEN}=== Success! ===${NC}"
-            echo "The subscription popup has been disabled."
-            echo "You should no longer see the subscription warning when logging in."
+            if ! disable_subscription_popup; then
+                popup_success=false
+            fi
+        fi
+        
+        # Configure repositories if needed
+        if [[ "$repo_needs_fix" == true ]]; then
             echo ""
-            echo "To restore the original popup:"
+            if ! configure_repositories; then
+                repo_success=false
+            fi
+        fi
+        
+        # Show final results
+        echo ""
+        if [[ "$popup_success" == true && "$repo_success" == true ]]; then
+            echo -e "${GREEN}=== Complete Success! ===${NC}"
+            echo "✓ Subscription popup disabled"
+            echo "✓ Repositories configured for no-subscription use"
+            echo ""
+            echo "You should no longer see subscription warnings when:"
+            echo "  - Logging into the web interface"
+            echo "  - Running apt update/upgrade commands"
+            echo ""
+            echo "To restore original settings:"
             echo "  sudo $(basename "$0") --restore"
             echo ""
             echo "To check status:"
             echo "  sudo $(basename "$0") --status"
+        elif [[ "$popup_success" == true ]]; then
+            echo -e "${GREEN}=== Partial Success ===${NC}"
+            echo "✓ Subscription popup disabled"
+            echo -e "${YELLOW}⚠ Repository configuration had issues${NC}"
+            echo "Check the messages above for details."
+        elif [[ "$repo_success" == true ]]; then
+            echo -e "${GREEN}=== Partial Success ===${NC}"
+            echo "✓ Repositories configured for no-subscription use"
+            echo -e "${YELLOW}⚠ Popup configuration had issues${NC}"
+            echo "Check the messages above for details."
         else
-            echo ""
-            echo -e "${RED}=== Failed! ===${NC}"
-            echo "Could not disable the subscription popup."
-            echo "Check the log file for details: $LOG_FILE"
+            echo -e "${RED}=== Configuration Failed! ===${NC}"
+            echo "Both popup and repository configuration had issues."
+            echo "Check the messages above and log file for details: $LOG_FILE"
             exit 1
         fi
     else
