@@ -10,6 +10,7 @@ A comprehensive collection of scripts to automatically fix common Proxmox issues
 4. **Console Access**: Proxmox console 500 errors preventing VM/container console access through the web interface
 5. **Root Filesystem Expansion**: Expanding root filesystem after cloning to larger drives or upgrading storage
 6. **Firmware Management**: Scanning NVMe and HDD drives for current firmware versions and providing update guidance
+7. **Subscription Popup**: Annoying "no valid subscription" popup that appears every login for users without enterprise subscriptions
 
 ## Scripts Overview
 
@@ -30,6 +31,7 @@ A comprehensive collection of scripts to automatically fix common Proxmox issues
 ### System Management
 - **`console-fix.sh`** - Diagnose and fix Proxmox console 500 errors
 - **`firmware-scanner.sh`** - Scan drives for firmware versions and provide update guidance
+- **`subscription-popup-fix.sh`** - Remove the "no valid subscription" popup warning at login
 
 For detailed documentation on each script, see the individual README files:
 - [README-install.md](README-install.md) - Complete install.sh documentation
@@ -41,6 +43,7 @@ For detailed documentation on each script, see the individual README files:
 - [README-console-fix.md](README-console-fix.md) - Console troubleshooting
 - [README-root-filesystem-expand.md](README-root-filesystem-expand.md) - Root filesystem expansion
 - [README-firmware-scanner.md](README-firmware-scanner.md) - Firmware scanning and updates
+- [README-subscription-popup-fix.md](README-subscription-popup-fix.md) - Subscription popup removal
 
 ## Quick Start
 
@@ -58,7 +61,7 @@ sudo ./install.sh
 ```
 
 The interactive installer will present you with options to:
-1. **Download and install all Proxmox tools** (network + storage + console + root expansion + firmware)
+1. **Download and install all Proxmox tools** (network + storage + console + root expansion + firmware + subscription popup fix)
 2. **Download and install specific tool categories** (network only, storage only, etc.)
 3. **Download scripts only** (no system installation)
 4. **Check for script updates**
@@ -104,6 +107,7 @@ sudo root-filesystem-expand          # Expand root filesystem
 # System management
 sudo console-fix                     # Fix console 500 errors
 sudo firmware-scanner                # Scan drive firmware
+sudo subscription-popup-fix          # Remove subscription popup warning
 ```
 
 ## Key Features
