@@ -8,9 +8,10 @@ A comprehensive collection of scripts to automatically fix common Proxmox issues
 2. **Storage Management**: Proxmox storage can fill up quickly with VM backups, logs, and other data, requiring analysis and cleanup  
 3. **Storage Configuration**: Proxmox storage display inconsistencies where summary page shows wrong capacity compared to actual disk size
 4. **Console Access**: Proxmox console 500 errors preventing VM/container console access through the web interface
-5. **Root Filesystem Expansion**: Expanding root filesystem after cloning to larger drives or upgrading storage
-6. **Firmware Management**: Scanning NVMe and HDD drives for current firmware versions and providing update guidance
-7. **Subscription Popup**: Annoying "no valid subscription" popup that appears every login for users without enterprise subscriptions
+5. **GUI Loading Issues**: Web interface JavaScript errors, missing files, and ExtJS library problems preventing proper GUI loading
+6. **Root Filesystem Expansion**: Expanding root filesystem after cloning to larger drives or upgrading storage
+7. **Firmware Management**: Scanning NVMe and HDD drives for current firmware versions and providing update guidance
+8. **Subscription Popup**: Annoying "no valid subscription" popup that appears every login for users without enterprise subscriptions
 
 ## Scripts Overview
 
@@ -30,6 +31,7 @@ A comprehensive collection of scripts to automatically fix common Proxmox issues
 
 ### System Management
 - **`console-fix.sh`** - Diagnose and fix Proxmox console 500 errors
+- **`gui-fix.sh`** - Diagnose and fix Proxmox web interface loading issues and JavaScript errors
 - **`firmware-scanner.sh`** - Scan drives for firmware versions and provide update guidance
 - **`subscription-popup-fix.sh`** - Remove the "no valid subscription" popup warning at login
 
@@ -41,6 +43,7 @@ For detailed documentation on each script, see the individual README files:
 - [README-storage-cleanup.md](README-storage-cleanup.md) - Storage cleanup
 - [README-storage-config-fix.md](README-storage-config-fix.md) - Storage configuration fixes
 - [README-console-fix.md](README-console-fix.md) - Console troubleshooting
+- [README-gui-fix.md](README-gui-fix.md) - Web interface loading issues
 - [README-root-filesystem-expand.md](README-root-filesystem-expand.md) - Root filesystem expansion
 - [README-firmware-scanner.md](README-firmware-scanner.md) - Firmware scanning and updates
 - [README-subscription-popup-fix.md](README-subscription-popup-fix.md) - Subscription popup removal
@@ -106,6 +109,7 @@ sudo root-filesystem-expand          # Expand root filesystem
 
 # System management
 sudo console-fix                     # Fix console 500 errors
+sudo gui-fix                         # Fix web interface loading issues
 sudo firmware-scanner                # Scan drive firmware
 sudo subscription-popup-fix          # Remove subscription popup warning
 ```
@@ -226,13 +230,20 @@ You can modify these variables at the top of firmware-scanner.sh:
 - `LOG_FILE`: Location of log file (default: `/var/log/firmware-scanner.log`)
 - `REPORT_FILE`: Location of analysis report (default: `/tmp/firmware-report.txt`)
 
+### GUI Fix Script
+You can modify these variables at the top of gui-fix.sh:
+
+- `LOG_FILE`: Location of log file (default: `/var/log/gui-fix.log`)
+- `BACKUP_DIR`: Directory for configuration backups (default: `/var/backups/gui-fix`)
+
 ## Documentation
 
 For detailed usage instructions for individual scripts:
 
 - **Network Tools**: See inline help with `./fix-network.sh --help`
 - **Storage Tools**: See inline help and comprehensive logging
-- **Console Tools**: See inline help with `./console-fix.sh --help`  
+- **Console Tools**: See inline help with `./console-fix.sh --help`
+- **GUI Tools**: See inline help with `./gui-fix.sh --help` and [README-gui-fix.md](README-gui-fix.md)
 - **Root Expansion**: See [README-root-filesystem-expand.md](README-root-filesystem-expand.md) for detailed usage guide
 - **Firmware Scanner**: See inline help with `./firmware-scanner.sh --help`
 
@@ -258,6 +269,14 @@ For detailed usage instructions for individual scripts:
 3. **SSL certificate problems** - Detects expired or corrupted certificates
 4. **Service dependency failures** - Ensures all required services are running
 
+### GUI Loading Issues
+1. **JavaScript syntax errors** - Fixes corrupted JavaScript files like proxmoxlib.js and pvemanagerlib.js
+2. **Missing web interface files** - Repairs missing critical files and web components
+3. **ExtJS library problems** - Resolves ExtJS constructor and loading issues
+4. **Cache corruption** - Clears corrupted cache and temporary files causing loading failures
+5. **Web service configuration** - Fixes pveproxy and web service configuration problems
+6. **File permission issues** - Corrects permissions on web interface directories and files
+
 ### Firmware Issues
 1. **Outdated firmware** - Identifies current firmware versions and available updates
 2. **Security vulnerabilities** - Highlights firmware updates that fix security issues
@@ -270,12 +289,13 @@ For detailed usage instructions for individual scripts:
 2. **Storage maintenance** - Run storage analysis monthly
 3. **Storage configuration** - Fix storage discrepancies when they occur
 4. **Console health checks** - Run console diagnostics after system updates
-5. **Backup before expansion** - Always backup important data before expanding filesystems
-6. **Test in non-production** - Validate scripts in test environment
-7. **Plan expansions** - Use the expansion opportunity checker before making changes
-8. **Firmware monitoring** - Run firmware scans quarterly to check for updates
-9. **Update planning** - Schedule firmware updates during maintenance windows
-10. **Update verification** - Always verify system stability after firmware updates
+5. **GUI maintenance** - Run GUI diagnostics if experiencing web interface issues
+6. **Backup before expansion** - Always backup important data before expanding filesystems
+7. **Test in non-production** - Validate scripts in test environment
+8. **Plan expansions** - Use the expansion opportunity checker before making changes
+9. **Firmware monitoring** - Run firmware scans quarterly to check for updates
+10. **Update planning** - Schedule firmware updates during maintenance windows
+11. **Update verification** - Always verify system stability after firmware updates
 
 ## License
 
