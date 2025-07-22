@@ -405,7 +405,7 @@ repair_web_files() {
     
     # First try to restore from subscription popup backups
     local popup_backup_restored=false
-    if check_subscription_popup_modifications >/dev/null 2>&1; then
+    if ! check_subscription_popup_modifications >/dev/null 2>&1; then
         echo "Attempting to restore from subscription popup backups first..."
         if restore_from_popup_backups; then
             popup_backup_restored=true
