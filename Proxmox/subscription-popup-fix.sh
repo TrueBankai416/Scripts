@@ -89,8 +89,16 @@ show_help() {
     echo ""
     echo "SAFETY:"
     echo "    - Creates automatic backups before any changes"
+    echo "    - Validates JavaScript syntax before and after modifications"
+    echo "    - Uses safer modification methods to prevent GUI loading issues"
     echo "    - Changes can be reverted with --restore option"
     echo "    - Repository changes are reversible"
+    echo ""
+    echo "IMPORTANT NOTES:"
+    echo "    - JavaScript modifications can sometimes cause web interface issues"
+    echo "    - If GUI loading problems occur, run: sudo ./gui-fix.sh"
+    echo "    - The gui-fix.sh script can detect and repair popup-related issues"
+    echo "    - Always test web interface functionality after running this script"
     echo ""
 }
 
@@ -184,6 +192,73 @@ create_backup() {
     fi
 }
 
+# Function to validate JavaScript syntax
+validate_javascript_syntax() {
+    local js_file="$1"
+    
+    # Try to validate with node if available
+    if command -v node &> /dev/null; then
+        if node -c "$js_file" 2>/dev/null; then
+            return 0
+        else
+            echo -e "${RED}✗ JavaScript syntax validation failed${NC}"
+            log_message "ERROR" "JavaScript syntax validation failed for $js_file"
+            return 1
+        fi
+    else
+        # Basic syntax check - look for unmatched braces, brackets, parentheses
+        local braces_count=$(grep -o '{' "$js_file" | wc -l)
+        local close_braces_count=$(grep -o '}' "$js_file" | wc -l)
+        
+        if [[ $braces_count -ne $close_braces_count ]]; then
+            echo -e "${RED}✗ Unmatched braces detected in JavaScript file${NC}"
+            log_message "ERROR" "Unmatched braces in $js_file: $braces_count opening, $close_braces_count closing"
+            return 1
+        fi
+        
+        echo -e "${CYAN}⚠ Node.js not available, performed basic syntax check only${NC}"
+        return 0
+    fi
+}
+
+# Function to create safer popup modifications
+create_safe_popup_modification() {
+    local original_file="$1"
+    local temp_file="$2"
+    
+    # More targeted and safer approach - only modify specific subscription popup calls
+    # This approach is less likely to break other JavaScript functionality
+    
+    # Method 1: Replace specific subscription warning patterns
+    if sed 's/Ext\.Msg\.show({[^}]*title[^}]*subscription[^}]*});/\/\* POPUP DISABLED - subscription warning removed \*\//gi' "$original_file" > "$temp_file"; then
+        if validate_javascript_syntax "$temp_file"; then
+            echo -e "${GREEN}✓ Created safe popup modification (Method 1)${NC}"
+            return 0
+        fi
+    fi
+    
+    # Method 2: More conservative approach - comment out popup code
+    cp "$original_file" "$temp_file"
+    if sed -i 's/\(Ext\.Msg\.show({[^}]*[Nn]o valid subscription[^}]*})\)/\/\* POPUP DISABLED: \1 \*\//g' "$temp_file"; then
+        if validate_javascript_syntax "$temp_file"; then
+            echo -e "${GREEN}✓ Created safe popup modification (Method 2)${NC}"
+            return 0
+        fi
+    fi
+    
+    # Method 3: Fallback - minimal targeted replacement
+    cp "$original_file" "$temp_file"
+    if sed -i '/No valid subscription/s/Ext\.Msg\.show/\/\/ POPUP DISABLED - Ext.Msg.show/' "$temp_file"; then
+        if validate_javascript_syntax "$temp_file"; then
+            echo -e "${GREEN}✓ Created safe popup modification (Method 3 - minimal)${NC}"
+            return 0
+        fi
+    fi
+    
+    echo -e "${RED}✗ All safe modification methods failed${NC}"
+    return 1
+}
+
 # Function to disable subscription popup
 disable_subscription_popup() {
     echo -e "${BLUE}=== Disabling Subscription Popup ===${NC}"
@@ -200,10 +275,19 @@ disable_subscription_popup() {
     echo "Target file: $js_file"
     
     # Check if already disabled
-    if grep -q "// POPUP DISABLED" "$js_file" 2>/dev/null; then
+    if grep -q "// POPUP DISABLED\|/\* POPUP DISABLED" "$js_file" 2>/dev/null; then
         echo -e "${YELLOW}⚠ Subscription popup is already disabled${NC}"
         log_message "INFO" "Subscription popup already disabled"
         return 0
+    fi
+    
+    # Validate original file syntax
+    echo "Validating original file syntax..."
+    if ! validate_javascript_syntax "$js_file"; then
+        echo -e "${RED}✗ Original JavaScript file has syntax errors${NC}"
+        echo "Cannot safely modify file with existing syntax errors."
+        echo "Try running the GUI fix script first: ./gui-fix.sh"
+        return 1
     fi
     
     # Create backup
@@ -211,52 +295,70 @@ disable_subscription_popup() {
         return 1
     fi
     
-    # Disable the popup by modifying the subscription check
-    log_message "INFO" "Disabling subscription popup in $js_file"
+    # Warning about potential GUI conflicts
+    echo ""
+    echo -e "${YELLOW}IMPORTANT SAFETY WARNING:${NC}"
+    echo "Modifying JavaScript files can sometimes cause web interface loading issues."
+    echo "If you experience problems after this modification:"
+    echo "  1. Run: sudo ./gui-fix.sh"
+    echo "  2. Or restore with: sudo ./subscription-popup-fix.sh --restore"
+    echo ""
     
-    # Method 1: Replace subscription check with empty function
-    if grep -q "Ext\.Msg\.show" "$js_file" && grep -q "No valid subscription" "$js_file"; then
-        # Create a temporary file with our modifications
-        local temp_file=$(mktemp)
-        
-        # Use sed to replace the subscription popup code
-        sed '/No valid subscription/,/Ext\.Msg\.show/c\
-// POPUP DISABLED - Original subscription check replaced\
-void(0);' "$js_file" > "$temp_file"
-        
-        if [[ -s "$temp_file" ]]; then
-            if mv "$temp_file" "$js_file"; then
-                # Fix file permissions (mv doesn't preserve permissions)
-                chmod 644 "$js_file"
-                chown root:root "$js_file"
-                echo -e "${GREEN}✓ Successfully disabled subscription popup${NC}"
-                log_message "INFO" "Successfully disabled subscription popup"
-            else
-                echo -e "${RED}✗ Failed to apply changes${NC}"
-                log_message "ERROR" "Failed to apply changes"
-                rm -f "$temp_file"
-                return 1
-            fi
+    if ! confirm_action "Continue with popup modification (understanding the risks)"; then
+        return 1
+    fi
+    
+    # Disable the popup using safer methods
+    log_message "INFO" "Disabling subscription popup in $js_file with safer methods"
+    
+    # Create temporary file for safe modifications
+    local temp_file=$(mktemp)
+    
+    # Use the safe modification function
+    if create_safe_popup_modification "$js_file" "$temp_file"; then
+        # Apply the safe modifications
+        if mv "$temp_file" "$js_file"; then
+            # Ensure correct file permissions
+            chmod 644 "$js_file"
+            chown root:root "$js_file"
+            echo -e "${GREEN}✓ Successfully disabled subscription popup with safe method${NC}"
+            log_message "INFO" "Successfully disabled subscription popup with safe method"
         else
-            echo -e "${RED}✗ Failed to create modified file${NC}"
-            log_message "ERROR" "Failed to create modified file"
+            echo -e "${RED}✗ Failed to apply safe modifications${NC}"
+            log_message "ERROR" "Failed to apply safe modifications"
             rm -f "$temp_file"
             return 1
         fi
     else
-        # Method 2: More targeted approach - replace specific function calls
-        if sed -i.tmp 's/Ext\.Msg\.show({[^}]*No valid subscription[^}]*});/\/\/ POPUP DISABLED - subscription check removed/g' "$js_file"; then
-            rm -f "$js_file.tmp"
-            # Ensure correct permissions after sed modification
+        echo -e "${RED}✗ All safe modification methods failed${NC}"
+        echo "The JavaScript file structure may be incompatible with safe modification."
+        echo "This could indicate:"
+        echo "  1. The file has already been modified by another tool"
+        echo "  2. The Proxmox version uses a different popup mechanism"  
+        echo "  3. There are existing syntax errors in the file"
+        log_message "ERROR" "Failed to create safe popup modifications"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    # Final validation of the modified file
+    echo "Validating modified file..."
+    if ! validate_javascript_syntax "$js_file"; then
+        echo -e "${RED}✗ Modified file failed syntax validation${NC}"
+        echo "Restoring from backup..."
+        
+        # Restore from backup
+        local backup_file="$BACKUP_DIR/$(basename "$js_file").backup"
+        if [[ -f "$backup_file" ]]; then
+            cp "$backup_file" "$js_file"
             chmod 644 "$js_file"
             chown root:root "$js_file"
-            echo -e "${GREEN}✓ Successfully disabled subscription popup${NC}"
-            log_message "INFO" "Successfully disabled subscription popup using targeted replacement"
-        else
-            echo -e "${RED}✗ Failed to modify subscription popup${NC}"
-            log_message "ERROR" "Failed to modify subscription popup"
-            return 1
+            echo -e "${YELLOW}⚠ Restored original file due to syntax errors${NC}"
+            log_message "ERROR" "Restored original file due to syntax errors in modification"
         fi
+        return 1
+    else
+        echo -e "${GREEN}✓ Modified file passed syntax validation${NC}"
     fi
     
     # Restart pveproxy to reload changes
