@@ -58,6 +58,10 @@ sudo ./fix-network.sh
 sudo ./fix-network.sh eth0
 sudo ./fix-network.sh enp0s3
 sudo ./fix-network.sh vmbr0
+
+# Skip disabling offloading features (keep network acceleration)
+sudo ./fix-network.sh --no-disable-offloading
+sudo ./fix-network.sh --keep-offloading eth0
 ```
 
 ### Advanced Usage
@@ -67,6 +71,12 @@ sudo ./fix-network.sh eth0 && tail -f /var/log/network-fix.log
 
 # Test connectivity only (no restart)
 ping -c 1 8.8.8.8 || sudo ./fix-network.sh
+
+# Keep offloading enabled for maximum performance (if you don't have Intel e1000e issues)
+sudo ./fix-network.sh --no-disable-offloading eth0
+
+# Combine with monitoring - restart without workarounds if needed
+ping -c 1 8.8.8.8 || sudo ./fix-network.sh --keep-offloading
 ```
 
 ## Configuration
@@ -127,7 +137,7 @@ For Proxmox bridges:
 
 The script includes specific fixes for Intel e1000e hardware hangs:
 
-#### Feature Disabling
+#### Feature Disabling (Default Behavior)
 ```bash
 # Disabled features known to cause issues
 ethtool -K interface gso off
@@ -136,6 +146,16 @@ ethtool -K interface tso off
 ethtool -K interface tx off
 ethtool -K interface rx off
 ```
+
+**Note**: This feature disabling can be skipped using `--no-disable-offloading` or `--keep-offloading` options if you prefer to maintain network acceleration features and don't experience Intel e1000e hardware hangs.
+
+#### When to Skip Offloading Disabling
+Use `--no-disable-offloading` when:
+- You don't have Intel e1000e controllers
+- You prefer maximum network performance over stability workarounds  
+- You've resolved e1000e issues through other means (driver updates, firmware, etc.)
+- You're using newer hardware that doesn't exhibit these problems
+- You want to test if the issue persists without the workaround
 
 #### Persistent Configuration
 Creates systemd service for boot-time feature disabling:
