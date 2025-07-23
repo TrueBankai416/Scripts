@@ -251,28 +251,46 @@ create_safe_popup_modification() {
     # More targeted and safer approach - only modify specific subscription popup calls
     # This approach is less likely to break other JavaScript functionality
     
-    # Method 1: Replace specific subscription warning patterns
-    if sed 's/Ext\.Msg\.show({[^}]*title[^}]*subscription[^}]*});/\/\* POPUP DISABLED - subscription warning removed \*\//gi' "$original_file" > "$temp_file"; then
+    # Method 1: Direct condition bypass - most reliable for Proxmox 8.4.5+
+    if sed 's/res\.data\.status\.toLowerCase() !== '\''active'\''/false/' "$original_file" > "$temp_file"; then
         if validate_javascript_syntax "$temp_file"; then
-            echo -e "${GREEN}✓ Created safe popup modification (Method 1)${NC}"
+            echo -e "${GREEN}✓ Created safe popup modification (Method 1 - condition bypass)${NC}"
             return 0
         fi
     fi
     
-    # Method 2: More conservative approach - comment out popup code
+    # Method 2: Replace gettext title with empty string
+    cp "$original_file" "$temp_file"
+    if sed -i "s/title: gettext('No valid subscription'),/\/\* POPUP DISABLED \*\/ title: '',/" "$temp_file"; then
+        if validate_javascript_syntax "$temp_file"; then
+            echo -e "${GREEN}✓ Created safe popup modification (Method 2 - empty title)${NC}"
+            return 0
+        fi
+    fi
+    
+    # Method 3: Replace specific subscription warning patterns (legacy)
+    cp "$original_file" "$temp_file"
+    if sed -i 's/Ext\.Msg\.show({[^}]*title[^}]*subscription[^}]*});/\/\* POPUP DISABLED - subscription warning removed \*\//gi' "$temp_file"; then
+        if validate_javascript_syntax "$temp_file"; then
+            echo -e "${GREEN}✓ Created safe popup modification (Method 3 - pattern replacement)${NC}"
+            return 0
+        fi
+    fi
+    
+    # Method 4: More conservative approach - comment out popup code
     cp "$original_file" "$temp_file"
     if sed -i 's/\(Ext\.Msg\.show({[^}]*[Nn]o valid subscription[^}]*})\)/\/\* POPUP DISABLED: \1 \*\//g' "$temp_file"; then
         if validate_javascript_syntax "$temp_file"; then
-            echo -e "${GREEN}✓ Created safe popup modification (Method 2)${NC}"
+            echo -e "${GREEN}✓ Created safe popup modification (Method 4 - comment out)${NC}"
             return 0
         fi
     fi
     
-    # Method 3: Fallback - minimal targeted replacement
+    # Method 5: Fallback - minimal targeted replacement
     cp "$original_file" "$temp_file"
     if sed -i '/No valid subscription/s/Ext\.Msg\.show/\/\/ POPUP DISABLED - Ext.Msg.show/' "$temp_file"; then
         if validate_javascript_syntax "$temp_file"; then
-            echo -e "${GREEN}✓ Created safe popup modification (Method 3 - minimal)${NC}"
+            echo -e "${GREEN}✓ Created safe popup modification (Method 5 - minimal)${NC}"
             return 0
         fi
     fi
