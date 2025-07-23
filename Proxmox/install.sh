@@ -1311,6 +1311,147 @@ select_download_type() {
     esac
 }
 
+# Function to restore offloading features during uninstall
+restore_offloading_features() {
+    print_status "$BLUE" "Checking for disabled offloading features..."
+    
+    # Features that our script typically disables
+    local features_to_check=("gso" "gro" "tso" "tx" "rx" "rxvlan" "txvlan" "sg")
+    local interfaces_with_disabled_features=()
+    local restoration_needed=false
+    
+    # Check if ethtool is available
+    if ! command -v ethtool >/dev/null 2>&1; then
+        print_status "$YELLOW" "⚠ ethtool not available, cannot check offloading features"
+        return
+    fi
+    
+    # Get list of physical network interfaces (skip virtual ones)
+    local physical_interfaces=()
+    for interface in $(ls /sys/class/net/ 2>/dev/null); do
+        # Skip virtual interfaces
+        if [[ "$interface" =~ ^(lo|veth|docker|br-|fwpr|fwbr|fwln|tap|tun|vmbr|dummy|bond|team).*$ ]]; then
+            continue
+        fi
+        
+        # Check if interface has a physical device
+        if [[ -e "/sys/class/net/$interface/device" ]]; then
+            physical_interfaces+=("$interface")
+        fi
+    done
+    
+    if [[ ${#physical_interfaces[@]} -eq 0 ]]; then
+        print_status "$YELLOW" "No physical network interfaces found to check"
+        return
+    fi
+    
+    print_status "$YELLOW" "Checking interfaces: ${physical_interfaces[*]}"
+    
+    # Check each physical interface for disabled features
+    for interface in "${physical_interfaces[@]}"; do
+        print_status "$YELLOW" "Checking $interface..."
+        
+        local disabled_features=()
+        
+        # Check each feature
+        for feature in "${features_to_check[@]}"; do
+            local status=$(ethtool -k "$interface" 2>/dev/null | grep "^${feature}:" | awk '{print $2}')
+            if [[ "$status" == "off" ]]; then
+                disabled_features+=("$feature")
+            fi
+        done
+        
+        if [[ ${#disabled_features[@]} -gt 0 ]]; then
+            interfaces_with_disabled_features+=("$interface")
+            restoration_needed=true
+            print_status "$YELLOW" "  Found disabled features on $interface: ${disabled_features[*]}"
+        else
+            print_status "$GREEN" "  All checked features enabled on $interface"
+        fi
+    done
+    
+    if [[ "$restoration_needed" == false ]]; then
+        print_status "$GREEN" "✓ No offloading restoration needed"
+        return
+    fi
+    
+    echo ""
+    print_status "$YELLOW" "Found interfaces with disabled offloading features:"
+    for interface in "${interfaces_with_disabled_features[@]}"; do
+        echo "  - $interface"
+    done
+    echo ""
+    
+    print_status "$YELLOW" "These features may have been disabled by the network fix script as Intel e1000e workarounds."
+    echo "Re-enabling them will restore full network acceleration performance."
+    echo ""
+    echo "Would you like to restore offloading features during uninstall? (y/N)"
+    read -r restore_choice
+    
+    if [[ "$restore_choice" =~ ^[Yy]$ ]]; then
+        print_status "$BLUE" "Restoring offloading features..."
+        
+        local restored_count=0
+        local failed_count=0
+        
+        for interface in "${interfaces_with_disabled_features[@]}"; do
+            print_status "$YELLOW" "Restoring features on $interface..."
+            
+            local success_count=0
+            local interface_failed=false
+            
+            for feature in "${features_to_check[@]}"; do
+                # Check if this feature is currently disabled
+                local status=$(ethtool -k "$interface" 2>/dev/null | grep "^${feature}:" | awk '{print $2}')
+                if [[ "$status" == "off" ]]; then
+                    if ethtool -K "$interface" "$feature" on 2>/dev/null; then
+                        print_status "$GREEN" "  ✓ Re-enabled $feature on $interface"
+                        ((success_count++))
+                    else
+                        print_status "$RED" "  ✗ Failed to re-enable $feature on $interface"
+                        interface_failed=true
+                    fi
+                fi
+            done
+            
+            if [[ "$interface_failed" == false && "$success_count" -gt 0 ]]; then
+                print_status "$GREEN" "✓ Successfully restored offloading on $interface ($success_count features)"
+                ((restored_count++))
+            elif [[ "$success_count" -gt 0 ]]; then
+                print_status "$YELLOW" "⚠ Partially restored offloading on $interface ($success_count features)"
+                ((restored_count++))
+            else
+                print_status "$RED" "✗ Failed to restore offloading on $interface"
+                ((failed_count++))
+            fi
+        done
+        
+        echo ""
+        if [[ "$restored_count" -gt 0 ]]; then
+            print_status "$GREEN" "Offloading restoration summary:"
+            echo "  ✓ Interfaces restored: $restored_count"
+            [[ "$failed_count" -gt 0 ]] && echo "  ✗ Interfaces failed: $failed_count"
+            echo ""
+            print_status "$BLUE" "Network performance should be restored to maximum levels."
+            echo "Changes take effect immediately - no reboot required."
+        else
+            print_status "$RED" "Failed to restore offloading on any interfaces"
+            echo "You can manually restore them after reboot or by running:"
+            for interface in "${interfaces_with_disabled_features[@]}"; do
+                echo "  sudo ethtool -K $interface gso on gro on tso on tx on rx on"
+            done
+        fi
+    else
+        print_status "$YELLOW" "Offloading restoration skipped."
+        echo ""
+        print_status "$BLUE" "To manually restore offloading features later:"
+        for interface in "${interfaces_with_disabled_features[@]}"; do
+            echo "  sudo ethtool -K $interface gso on gro on tso on tx on rx on"
+        done
+        echo "Or simply reboot the system to restore default settings."
+    fi
+}
+
 # Function to handle uninstall
 uninstall_tools() {
     local script_type="${1:-interactive}"
@@ -1340,6 +1481,9 @@ uninstall_tools() {
         
         # Remove ethtool workaround services
         rm -f "$SERVICE_DIR/ethtool-workaround-"*.service 2>/dev/null
+        
+        # Check and optionally restore offloading features
+        restore_offloading_features
         
         # Remove cron job if it exists
         if crontab -l 2>/dev/null | grep -q "network-monitor check"; then
