@@ -582,6 +582,26 @@ setup_automation() {
     
     if [[ "$setup_auto" =~ ^[Yy]$ ]]; then
         echo ""
+        print_status "$YELLOW" "Network offloading configuration:"
+        echo ""
+        echo "By default, the network fix script disables network offloading features"
+        echo "(GSO, GRO, TSO, etc.) as a workaround for Intel e1000e hardware hang issues."
+        echo ""
+        echo "Would you like to keep network offloading features enabled for better performance?"
+        echo "Note: Only choose 'yes' if you don't have Intel e1000e issues or prefer maximum performance."
+        echo ""
+        echo -n "Keep offloading enabled? (y/N): "
+        read -r keep_offloading
+        
+        local offloading_flag=""
+        if [[ "$keep_offloading" =~ ^[Yy]$ ]]; then
+            offloading_flag="--no-disable-offloading"
+            print_status "$GREEN" "✓ Network offloading will be kept enabled for better performance"
+        else
+            print_status "$YELLOW" "✓ Network offloading will be disabled (Intel e1000e workaround)"
+        fi
+        
+        echo ""
         print_status "$YELLOW" "Choose monitoring method:"
         echo "1. Systemd Service (recommended - continuous monitoring)"
         echo "2. Cron Job (periodic checks every 5 minutes)"
@@ -592,10 +612,10 @@ setup_automation() {
         
         case "$choice" in
             1)
-                setup_systemd_monitoring
+                setup_systemd_monitoring "$offloading_flag"
                 ;;
             2)
-                setup_cron_monitoring
+                setup_cron_monitoring "$offloading_flag"
                 ;;
             3)
                 print_status "$YELLOW" "Automation setup skipped. You can set it up later."
@@ -611,7 +631,35 @@ setup_automation() {
 
 # Function to setup systemd monitoring
 setup_systemd_monitoring() {
+    local offloading_flag="$1"
     print_status "$BLUE" "Setting up systemd service monitoring..."
+    
+    # If we have offloading flag, create a custom service file
+    if [[ -n "$offloading_flag" ]]; then
+        print_status "$YELLOW" "Creating custom service with offloading settings..."
+        
+        # Copy the original service file to install directory
+        if [[ -f "network-fix.service" ]]; then
+            cp network-fix.service "$SERVICE_DIR/network-fix.service"
+        fi
+        
+        # Modify the ExecStart line to include the flag
+        if [[ -f "$SERVICE_DIR/network-fix.service" ]]; then
+            sed -i "s|ExecStart=/usr/local/bin/network-monitor.sh monitor|ExecStart=/usr/local/bin/network-monitor.sh $offloading_flag monitor|g" "$SERVICE_DIR/network-fix.service"
+            print_status "$GREEN" "✓ Service configured with offloading settings"
+        else
+            print_status "$RED" "✗ Service file not found, cannot configure offloading settings"
+            return 1
+        fi
+    else
+        # Use the default service file
+        if [[ -f "network-fix.service" ]]; then
+            cp network-fix.service "$SERVICE_DIR/network-fix.service"
+        fi
+    fi
+    
+    # Reload systemd to recognize changes
+    systemctl daemon-reload
     
     if systemctl enable network-fix.service 2>/dev/null; then
         print_status "$GREEN" "✓ Service enabled successfully"
@@ -645,9 +693,10 @@ setup_systemd_monitoring() {
 
 # Function to setup cron monitoring
 setup_cron_monitoring() {
+    local offloading_flag="$1"
     print_status "$BLUE" "Setting up cron job monitoring..."
     
-    local cron_line="*/5 * * * * /usr/local/bin/network-monitor check >/dev/null 2>&1"
+    local cron_line="*/5 * * * * /usr/local/bin/network-monitor $offloading_flag check >/dev/null 2>&1"
     local temp_cron="/tmp/crontab.tmp"
     
     # Get current crontab
