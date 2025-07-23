@@ -818,7 +818,7 @@ test_installation() {
         
         if [[ -x "$INSTALL_DIR/network-monitor.sh" ]]; then
             ((tests_total++))
-            if "$INSTALL_DIR/network-monitor.sh" help &>/dev/null; then
+            if "$INSTALL_DIR/network-monitor.sh" --help &>/dev/null; then
                 print_status "$GREEN" "✓ network-monitor help works"
                 ((tests_passed++))
             else
