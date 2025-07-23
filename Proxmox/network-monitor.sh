@@ -205,6 +205,7 @@ case "${1:-monitor}" in
         echo "  Log file: $LOG_FILE"
         echo "  Fix script: $FIX_SCRIPT"
         [[ -n "$FIX_SCRIPT_OPTIONS" ]] && echo "  Fix options: $FIX_SCRIPT_OPTIONS"
+        exit 0
         ;;
     *)
         echo -e "${RED}Unknown command: $1${NC}"
