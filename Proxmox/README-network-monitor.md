@@ -19,8 +19,14 @@ The `network-monitor.sh` script provides:
 # Start continuous monitoring (default)
 sudo network-monitor
 
+# Start monitoring while keeping network offloading enabled
+sudo network-monitor --no-disable-offloading monitor
+
 # Perform single connectivity check (for cron)
 sudo network-monitor check
+
+# Single check while keeping offloading enabled
+sudo network-monitor --keep-offloading check
 
 # View recent log entries
 network-monitor status
