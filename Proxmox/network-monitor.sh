@@ -12,6 +12,9 @@ CHECK_INTERVAL=30  # 30 Seconds
 MAX_FAILURES=2      # Require 2 consecutive failures before attempting fix
 FIX_SCRIPT="/usr/local/bin/fix-network.sh"
 
+# Additional options for fix script
+FIX_SCRIPT_OPTIONS=""
+
 # Failure counter
 FAILURE_COUNT=0
 
@@ -43,8 +46,9 @@ attempt_fix() {
     log_message "WARN" "Attempting to fix network connectivity"
     
     if [[ -x "$FIX_SCRIPT" ]]; then
-        log_message "INFO" "Running network fix script: $FIX_SCRIPT"
-        "$FIX_SCRIPT" >> "$LOG_FILE" 2>&1
+        local fix_command="$FIX_SCRIPT $FIX_SCRIPT_OPTIONS"
+        log_message "INFO" "Running network fix script: $fix_command"
+        $fix_command >> "$LOG_FILE" 2>&1
         local exit_code=$?
         
         if [[ $exit_code -eq 0 ]]; then
@@ -115,6 +119,30 @@ single_check() {
     fi
 }
 
+# Parse command-line arguments for fix script options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            # Handle help in the argument parsing to show complete help
+            set -- "help"
+            break
+            ;;
+        --no-disable-offloading|--keep-offloading)
+            FIX_SCRIPT_OPTIONS="$FIX_SCRIPT_OPTIONS --no-disable-offloading"
+            shift
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            echo "Use 'help' command for usage information" >&2
+            exit 1
+            ;;
+        *)
+            # This is the command (monitor, check, status, help)
+            break
+            ;;
+    esac
+done
+
 # Handle command line arguments
 case "${1:-monitor}" in
     "monitor")
@@ -153,7 +181,11 @@ case "${1:-monitor}" in
         fi
         ;;
     "help"|"-h"|"--help")
-        echo "Usage: $0 [command]"
+        echo "Usage: $0 [OPTIONS] [command]"
+        echo ""
+        echo "Options:"
+        echo "  --no-disable-offloading    Don't disable network offloading when fixing"
+        echo "  --keep-offloading          Alias for --no-disable-offloading"
         echo ""
         echo "Commands:"
         echo "  monitor  - Start continuous network monitoring (default)"
@@ -161,12 +193,18 @@ case "${1:-monitor}" in
         echo "  status   - Show recent log entries"
         echo "  help     - Show this help message"
         echo ""
+        echo "Examples:"
+        echo "  $0 monitor                           # Monitor with default settings"
+        echo "  $0 --no-disable-offloading monitor  # Monitor, keep offloading enabled"
+        echo "  $0 --keep-offloading check          # Single check, keep offloading"
+        echo ""
         echo "Configuration (edit script to change):"
         echo "  Check interval: ${CHECK_INTERVAL}s"
         echo "  Max failures: $MAX_FAILURES"
         echo "  Ping target: $PING_TARGET"
         echo "  Log file: $LOG_FILE"
         echo "  Fix script: $FIX_SCRIPT"
+        [[ -n "$FIX_SCRIPT_OPTIONS" ]] && echo "  Fix options: $FIX_SCRIPT_OPTIONS"
         ;;
     *)
         echo -e "${RED}Unknown command: $1${NC}"
