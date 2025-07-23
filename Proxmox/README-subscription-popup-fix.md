@@ -1,32 +1,44 @@
-# Proxmox Subscription Popup Fix
+# Proxmox Subscription Popup Fix & Repository Configuration
 
-This script removes the "no valid subscription" popup warning that appears when logging into the Proxmox web interface without an enterprise subscription.
+This script removes the "no valid subscription" popup warning that appears when logging into the Proxmox web interface without an enterprise subscription and configures repositories to use the free no-subscription repository instead of the enterprise one.
 
-## Problem
+## Problems Solved
 
-Proxmox VE displays a subscription popup warning every time you log into the web interface if you don't have a valid enterprise subscription. This popup is annoying for home lab users and those using the free community version.
+1. **Subscription Popup**: Annoying popup warning every time you log into the web interface
+2. **Repository Errors**: Package update failures due to enterprise repository requiring subscription
+3. **Manual Configuration**: Tedious manual setup of repositories for non-subscription users
 
-## Solution
+## Complete Solution
 
-The script modifies the Proxmox JavaScript files to disable the subscription check popup while maintaining all other functionality. The modification is:
+The script provides a comprehensive solution that:
 
-- **Safe**: Only affects the popup display, no system functionality is changed
+### Popup Management
+- **Disables popup**: Modifies JavaScript files to remove subscription warning
+- **Safe modification**: Only affects popup display, no system functionality changed
 - **Reversible**: Automatic backups allow easy restoration
 - **Non-destructive**: Original files are preserved
-- **Clean**: Uses proper JavaScript commenting
+
+### Repository Configuration
+- **Disables enterprise repo**: Comments out the subscription-requiring enterprise repository
+- **Enables no-subscription repo**: Configures the free community repository
+- **Version detection**: Automatically detects Proxmox version for correct repository URLs
+- **Package list updates**: Refreshes package lists after repository changes
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
-# Remove subscription popup (with confirmation)
+# Remove popup AND configure repositories (recommended)
 sudo ./subscription-popup-fix.sh
 
-# Check current popup status
+# Check current popup and repository status
 sudo ./subscription-popup-fix.sh --status
 
-# Restore original popup behavior
+# Configure only repositories (no popup changes)
+sudo ./subscription-popup-fix.sh --repo-only
+
+# Restore original popup and repositories
 sudo ./subscription-popup-fix.sh --restore
 
 # Create backup only (no changes)
@@ -35,28 +47,36 @@ sudo ./subscription-popup-fix.sh --backup
 
 ### Command Line Options
 
-- `--status` - Check if popup is currently enabled/disabled
-- `--restore` - Restore original popup from backup
-- `--backup` - Create backup without making changes
+- `--status` - Check popup and repository status
+- `--restore` - Restore original popup and repositories from backup
+- `--backup` - Create backups of both JavaScript and repository files
+- `--repo-only` - Configure repositories only (no popup changes)
 - `--help` - Show detailed help information
 
 ## Features
 
 ### Safety Features
-- **Automatic backups** before any modifications
+- **Automatic backups** before any modifications (JavaScript files AND repositories)
 - **Backup validation** to ensure files can be restored
-- **Rollback capability** with `--restore` option
-- **Status checking** to verify current state
+- **Rollback capability** with `--restore` option for complete restoration
+- **Status checking** to verify current popup and repository state
 - **Confirmation prompts** before making changes
 
 ### Smart Detection
 - **Auto-locates** Proxmox JavaScript files across different versions
-- **Version compatibility** with various Proxmox VE releases
+- **Version compatibility** with various Proxmox VE releases (6.x, 7.x, 8.x)
 - **Path detection** handles different installation locations
+- **Repository version detection** automatically determines correct Debian codename
 - **File validation** ensures correct files are modified
 
+### Repository Management
+- **Enterprise repo handling** - safely disables subscription-requiring repository
+- **No-subscription repo setup** - enables free community repository with correct URLs
+- **Version-aware configuration** - uses appropriate repository for your Proxmox version
+- **Package list updates** - refreshes apt cache after repository changes
+
 ### Comprehensive Logging
-- **Detailed logging** of all operations
+- **Detailed logging** of all operations (popup and repository changes)
 - **Timestamped entries** for audit trail
 - **Error tracking** for troubleshooting
 - **Status reporting** for verification
