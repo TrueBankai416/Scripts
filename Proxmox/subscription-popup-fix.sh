@@ -143,10 +143,12 @@ check_popup_status() {
     
     echo "Found Proxmox JS file: $js_file"
     
-    # Check if popup is disabled (looking for our modification)
-    if grep -q "// POPUP DISABLED" "$js_file" 2>/dev/null; then
-        echo -e "${GREEN}✓ Subscription popup is currently DISABLED${NC}"
-        log_message "INFO" "Subscription popup is disabled"
+    # Check if popup is disabled - multiple detection methods
+    
+    # Method 1: Check for comment-based modifications
+    if grep -q "// POPUP DISABLED\|/\* POPUP DISABLED" "$js_file" 2>/dev/null; then
+        echo -e "${GREEN}✓ Subscription popup is currently DISABLED (comment method)${NC}"
+        log_message "INFO" "Subscription popup is disabled via comment method"
         
         # Check if there's a backup
         local backup_file="$BACKUP_DIR/$(basename "$js_file").backup"
@@ -154,7 +156,25 @@ check_popup_status() {
             echo -e "${CYAN}  Backup available: $backup_file${NC}"
         fi
         return 0
-    elif grep -q "No valid subscription" "$js_file" 2>/dev/null; then
+    fi
+    
+    # Method 2: Check for condition bypass (hardcoded false)
+    # Look for the specific pattern where subscription check was replaced with false
+    local subscription_condition_area=$(sed -n '610,620p' "$js_file" 2>/dev/null)
+    if echo "$subscription_condition_area" | grep -q "res === null" && echo "$subscription_condition_area" | grep -q "false" && ! echo "$subscription_condition_area" | grep -q "res\.data\.status"; then
+        echo -e "${GREEN}✓ Subscription popup is currently DISABLED (condition bypass)${NC}"
+        log_message "INFO" "Subscription popup is disabled via condition bypass"
+        
+        # Check if there's a backup
+        local backup_file="$BACKUP_DIR/$(basename "$js_file").backup"
+        if [[ -f "$backup_file" ]]; then
+            echo -e "${CYAN}  Backup available: $backup_file${NC}"
+        fi
+        return 0
+    fi
+    
+    # Method 3: Check if subscription popup text still exists (enabled state)
+    if grep -q "No valid subscription" "$js_file" 2>/dev/null; then
         echo -e "${YELLOW}⚠ Subscription popup is currently ENABLED${NC}"
         log_message "INFO" "Subscription popup is enabled"
         return 2
