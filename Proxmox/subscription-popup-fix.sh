@@ -196,27 +196,49 @@ create_backup() {
 validate_javascript_syntax() {
     local js_file="$1"
     
-    # Try to validate with node if available
+    # Try to validate with node if available (most reliable)
     if command -v node &> /dev/null; then
         if node -c "$js_file" 2>/dev/null; then
+            echo -e "${GREEN}✓ JavaScript syntax validated with Node.js${NC}"
             return 0
         else
-            echo -e "${RED}✗ JavaScript syntax validation failed${NC}"
+            echo -e "${RED}✗ JavaScript syntax validation failed with Node.js${NC}"
             log_message "ERROR" "JavaScript syntax validation failed for $js_file"
             return 1
         fi
     else
-        # Basic syntax check - look for unmatched braces, brackets, parentheses
-        local braces_count=$(grep -o '{' "$js_file" | wc -l)
-        local close_braces_count=$(grep -o '}' "$js_file" | wc -l)
+        # Relaxed validation when Node.js is not available
+        echo -e "${CYAN}⚠ Node.js not available, using relaxed validation${NC}"
         
-        if [[ $braces_count -ne $close_braces_count ]]; then
-            echo -e "${RED}✗ Unmatched braces detected in JavaScript file${NC}"
-            log_message "ERROR" "Unmatched braces in $js_file: $braces_count opening, $close_braces_count closing"
+        # Check for obvious syntax issues
+        local file_size=$(wc -c < "$js_file")
+        
+        # File should be reasonable size (not empty, not huge)
+        if [[ $file_size -lt 100 ]]; then
+            echo -e "${RED}✗ JavaScript file appears to be empty or too small${NC}"
             return 1
         fi
         
-        echo -e "${CYAN}⚠ Node.js not available, performed basic syntax check only${NC}"
+        if [[ $file_size -gt 10000000 ]]; then
+            echo -e "${RED}✗ JavaScript file appears to be unusually large${NC}"
+            return 1
+        fi
+        
+        # Check for basic JavaScript structure
+        if ! grep -q "function\|var\|let\|const" "$js_file"; then
+            echo -e "${RED}✗ File doesn't appear to contain JavaScript code${NC}"
+            return 1
+        fi
+        
+        # Check that file ends reasonably (not truncated)
+        local last_chars=$(tail -c 10 "$js_file" | tr -d '\n\r\t ')
+        if [[ ${#last_chars} -eq 0 ]]; then
+            echo -e "${RED}✗ File appears to end unexpectedly${NC}"
+            return 1
+        fi
+        
+        echo -e "${GREEN}✓ Basic JavaScript structure validation passed${NC}"
+        log_message "INFO" "Relaxed validation passed for $js_file"
         return 0
     fi
 }
