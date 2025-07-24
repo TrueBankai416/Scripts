@@ -180,13 +180,16 @@ identify_broken_repositories() {
     # First check APT output for broken repositories reported by APT itself
     if [[ -f "/tmp/apt-fix-output.txt" ]]; then
         echo "Analyzing APT update output for broken repositories..."
-        local apt_broken_repos=$(grep -o "file:[^ ]*" /tmp/apt-fix-output.txt | grep -o "/[^[:space:]]*" | sort -u)
+        # Extract file:// paths from APT errors, handling both file:/ and file:/// formats
+        local apt_broken_repos=$(grep -o "file:[^ ]*" /tmp/apt-fix-output.txt | sed 's|file:/*||' | sort -u)
         if [[ -n "$apt_broken_repos" ]]; then
             echo "APT reported broken local repositories:"
             while IFS= read -r repo_path; do
                 if [[ -n "$repo_path" ]]; then
+                    # Clean up path to handle various formats
+                    repo_path=$(echo "$repo_path" | sed 's|^/*|/|')
                     echo -e "${RED}✗ APT-reported broken repository: $repo_path${NC}"
-                    broken_repos+=("APT-DETECTED:deb file:$repo_path /")
+                    broken_repos+=("APT-DETECTED:$repo_path")
                     log_message "ERROR" "APT-reported broken repository: $repo_path"
                 fi
             done <<< "$apt_broken_repos"
@@ -220,14 +223,18 @@ identify_broken_repositories() {
     if [[ -d "/etc/apt/sources.list.d" ]]; then
         local sources_d_files=$(find /etc/apt/sources.list.d -name "*.list" -type f 2>/dev/null)
         for file in $sources_d_files; do
-            local file_repos_d=$(grep -E "^[[:space:]]*deb[[:space:]]+file:" "$file" 2>/dev/null || true)
+            # Look for any deb line containing file: (handles complex formats like [signed-by=...] file:...)
+            local file_repos_d=$(grep -E "^[[:space:]]*deb.*file:" "$file" 2>/dev/null || true)
             if [[ -n "$file_repos_d" ]]; then
                 echo "Local repositories found in $file:"
                 echo "$file_repos_d"
                 
                 while IFS= read -r line; do
                     if [[ -n "$line" ]]; then
-                        local repo_path=$(echo "$line" | sed 's/^[[:space:]]*deb[[:space:]]\+file:\([^ ]*\).*/\1/')
+                        # Extract repo path, handling complex formats like [signed-by=...] file:///path
+                        local repo_path=$(echo "$line" | sed 's/.*file:\([^ ]*\).*/\1/')
+                        # Remove any triple slashes to get clean path
+                        repo_path=$(echo "$repo_path" | sed 's|^///|/|')
                         if [[ ! -d "$repo_path" || ! -f "$repo_path/Release" ]]; then
                             echo -e "${RED}✗ Broken local repository in $file: $repo_path${NC}"
                             broken_repos+=("$file:$line")
@@ -349,10 +356,13 @@ fix_broken_repositories() {
         
         # Check APT output for broken repositories
         if [[ -f "/tmp/apt-fix-output.txt" ]]; then
-            local apt_broken_repos=$(grep -o "file:[^ ]*" /tmp/apt-fix-output.txt | grep -o "/[^[:space:]]*" | sort -u)
+            # Extract file:// paths from APT errors, handling both file:/ and file:/// formats
+            local apt_broken_repos=$(grep -o "file:[^ ]*" /tmp/apt-fix-output.txt | sed 's|file:/*||' | sort -u)
             if [[ -n "$apt_broken_repos" ]]; then
                 while IFS= read -r repo_path; do
                     if [[ -n "$repo_path" ]]; then
+                        # Clean up path to handle various formats
+                        repo_path=$(echo "$repo_path" | sed 's|^/*|/|')
                         broken_repos+=("APT-DETECTED:$repo_path")
                     fi
                 done <<< "$apt_broken_repos"
@@ -427,17 +437,47 @@ fix_broken_repositories() {
                 local fixed_file=false
                 
                 while IFS= read -r line; do
-                    if [[ "$line" =~ ^[[:space:]]*deb[[:space:]]+file: ]]; then
-                        local repo_path=$(echo "$line" | sed 's/^[[:space:]]*deb[[:space:]]\+file:\([^ ]*\).*/\1/')
-                        if [[ ! -d "$repo_path" || ! -f "$repo_path/Release" ]]; then
-                            echo "# DISABLED by apt-fix.sh - broken local repository: $line" >> "$temp_file"
-                            echo -e "${GREEN}✓ Commented out broken repository in $file: $repo_path${NC}"
-                            log_message "INFO" "Commented out broken repository in $file: $repo_path"
-                            fixed_file=true
-                            ((repos_fixed++))
-                        else
-                            echo "$line" >> "$temp_file"
+                    local should_disable=false
+                    local disable_reason=""
+                    
+                    # Check if this line matches any broken repository from our detection
+                    for broken_repo in "${broken_repos[@]}"; do
+                        if [[ "$broken_repo" =~ ^APT-DETECTED: ]]; then
+                            local broken_path=$(echo "$broken_repo" | sed 's/APT-DETECTED://')
+                            # Handle complex repository formats with options like [signed-by=...]
+                            if [[ "$line" =~ file:.*$broken_path ]]; then
+                                should_disable=true
+                                disable_reason="APT-reported broken repository"
+                                break
+                            fi
+                        elif [[ "$broken_repo" =~ ^$file: ]]; then
+                            local broken_line=$(echo "$broken_repo" | sed "s|^$file:||")
+                            if [[ "$line" == "$broken_line" ]]; then
+                                should_disable=true
+                                disable_reason="broken local repository"
+                                break
+                            fi
                         fi
+                    done
+                    
+                    # Also check for any file:// repository patterns that are broken (handles complex formats)
+                    if [[ "$should_disable" == false && "$line" =~ ^[[:space:]]*deb.* && "$line" =~ file: ]]; then
+                        # Extract repo path, handling complex formats like [signed-by=...] file:///path
+                        local repo_path=$(echo "$line" | sed 's/.*file:\([^ ]*\).*/\1/')
+                        # Remove any triple slashes to get clean path
+                        repo_path=$(echo "$repo_path" | sed 's|^///|/|')
+                        if [[ ! -d "$repo_path" || ! -f "$repo_path/Release" ]]; then
+                            should_disable=true
+                            disable_reason="broken local repository"
+                        fi
+                    fi
+                    
+                    if [[ "$should_disable" == true ]]; then
+                        echo "# DISABLED by apt-fix.sh - $disable_reason: $line" >> "$temp_file"
+                        echo -e "${GREEN}✓ Commented out $disable_reason in $file${NC}"
+                        log_message "INFO" "Commented out $disable_reason in $file: $line"
+                        fixed_file=true
+                        ((repos_fixed++))
                     else
                         echo "$line" >> "$temp_file"
                     fi
