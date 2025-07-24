@@ -12,6 +12,7 @@ A comprehensive collection of scripts to automatically fix common Proxmox issues
 6. **Root Filesystem Expansion**: Expanding root filesystem after cloning to larger drives or upgrading storage
 7. **Firmware Management**: Scanning NVMe and HDD drives for current firmware versions and providing update guidance
 8. **Subscription Popup**: Annoying "no valid subscription" popup that appears every login for users without enterprise subscriptions
+9. **APT Repository Issues**: Broken local repositories, duplicate configurations, and corrupted APT cache preventing package updates
 
 ## Scripts Overview
 
@@ -34,6 +35,7 @@ A comprehensive collection of scripts to automatically fix common Proxmox issues
 - **`gui-fix.sh`** - Diagnose and fix Proxmox web interface loading issues and JavaScript errors
 - **`firmware-scanner.sh`** - Scan drives for firmware versions and provide update guidance
 - **`subscription-popup-fix.sh`** - Remove the "no valid subscription" popup warning at login
+- **`apt-fix.sh`** - Diagnose and fix APT repository issues including broken local repos and duplicates
 
 For detailed documentation on each script, see the individual README files:
 - [README-install.md](README-install.md) - Complete install.sh documentation
@@ -47,6 +49,7 @@ For detailed documentation on each script, see the individual README files:
 - [README-root-filesystem-expand.md](README-root-filesystem-expand.md) - Root filesystem expansion
 - [README-firmware-scanner.md](README-firmware-scanner.md) - Firmware scanning and updates
 - [README-subscription-popup-fix.md](README-subscription-popup-fix.md) - Subscription popup removal
+- [README-apt-fix.md](README-apt-fix.md) - APT repository diagnosis and repair
 
 ## Quick Start
 
@@ -112,6 +115,7 @@ sudo console-fix                     # Fix console 500 errors
 sudo gui-fix                         # Fix web interface loading issues
 sudo firmware-scanner                # Scan drive firmware
 sudo subscription-popup-fix          # Remove subscription popup warning
+sudo apt-fix                         # Diagnose and fix APT repository issues
 ```
 
 ## Key Features
