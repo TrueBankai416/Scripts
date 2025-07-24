@@ -121,6 +121,9 @@ check_apt_repositories() {
         echo "$apt_output"
         echo ""
         issues_found=true
+        
+        # Store APT output for use by other functions
+        echo "$apt_output" > /tmp/apt-fix-output.txt
     fi
     
     # Analyze common error patterns
@@ -174,6 +177,23 @@ identify_broken_repositories() {
     
     local broken_repos=()
     
+    # First check APT output for broken repositories reported by APT itself
+    if [[ -f "/tmp/apt-fix-output.txt" ]]; then
+        echo "Analyzing APT update output for broken repositories..."
+        local apt_broken_repos=$(grep -o "file:[^ ]*" /tmp/apt-fix-output.txt | grep -o "/[^[:space:]]*" | sort -u)
+        if [[ -n "$apt_broken_repos" ]]; then
+            echo "APT reported broken local repositories:"
+            while IFS= read -r repo_path; do
+                if [[ -n "$repo_path" ]]; then
+                    echo -e "${RED}✗ APT-reported broken repository: $repo_path${NC}"
+                    broken_repos+=("APT-DETECTED:deb file:$repo_path /")
+                    log_message "ERROR" "APT-reported broken repository: $repo_path"
+                fi
+            done <<< "$apt_broken_repos"
+            echo ""
+        fi
+    fi
+    
     # Check sources.list for file:// repositories
     local file_repos=$(grep -E "^[[:space:]]*deb[[:space:]]+file:" /etc/apt/sources.list 2>/dev/null || true)
     if [[ -n "$file_repos" ]]; then
@@ -187,7 +207,7 @@ identify_broken_repositories() {
                 local repo_path=$(echo "$line" | sed 's/^[[:space:]]*deb[[:space:]]\+file:\([^ ]*\).*/\1/')
                 if [[ ! -d "$repo_path" || ! -f "$repo_path/Release" ]]; then
                     echo -e "${RED}✗ Broken local repository: $repo_path${NC}"
-                    broken_repos+=("$line")
+                    broken_repos+=("/etc/apt/sources.list:$line")
                     log_message "ERROR" "Broken local repository found: $repo_path"
                 else
                     echo -e "${GREEN}✓ Valid local repository: $repo_path${NC}"
@@ -321,23 +341,71 @@ fix_broken_repositories() {
         
         local repos_fixed=0
         
+        # Get list of broken repositories from previous identification
+        local broken_repos=()
+        
+        # Re-run identification to get current broken repos list
+        echo "Re-identifying broken repositories for fixing..."
+        
+        # Check APT output for broken repositories
+        if [[ -f "/tmp/apt-fix-output.txt" ]]; then
+            local apt_broken_repos=$(grep -o "file:[^ ]*" /tmp/apt-fix-output.txt | grep -o "/[^[:space:]]*" | sort -u)
+            if [[ -n "$apt_broken_repos" ]]; then
+                while IFS= read -r repo_path; do
+                    if [[ -n "$repo_path" ]]; then
+                        broken_repos+=("APT-DETECTED:$repo_path")
+                    fi
+                done <<< "$apt_broken_repos"
+            fi
+        fi
+        
+        # Check sources.list for file:// repositories
+        local file_repos=$(grep -E "^[[:space:]]*deb[[:space:]]+file:" /etc/apt/sources.list 2>/dev/null || true)
+        if [[ -n "$file_repos" ]]; then
+            while IFS= read -r line; do
+                if [[ -n "$line" ]]; then
+                    local repo_path=$(echo "$line" | sed 's/^[[:space:]]*deb[[:space:]]\+file:\([^ ]*\).*/\1/')
+                    if [[ ! -d "$repo_path" || ! -f "$repo_path/Release" ]]; then
+                        broken_repos+=("/etc/apt/sources.list:$line")
+                    fi
+                fi
+            done <<< "$file_repos"
+        fi
+        
         # Fix broken repositories in sources.list
         if [[ -f "/etc/apt/sources.list" ]]; then
             local temp_sources=$(mktemp)
             local fixed_sources=false
             
             while IFS= read -r line; do
-                if [[ "$line" =~ ^[[:space:]]*deb[[:space:]]+file: ]]; then
-                    local repo_path=$(echo "$line" | sed 's/^[[:space:]]*deb[[:space:]]\+file:\([^ ]*\).*/\1/')
-                    if [[ ! -d "$repo_path" || ! -f "$repo_path/Release" ]]; then
-                        echo "# DISABLED by apt-fix.sh - broken local repository: $line" >> "$temp_sources"
-                        echo -e "${GREEN}✓ Commented out broken repository in sources.list: $repo_path${NC}"
-                        log_message "INFO" "Commented out broken repository in sources.list: $repo_path"
-                        fixed_sources=true
-                        ((repos_fixed++))
-                    else
-                        echo "$line" >> "$temp_sources"
+                local should_disable=false
+                local disable_reason=""
+                
+                # Check if this line matches any broken repository
+                for broken_repo in "${broken_repos[@]}"; do
+                    if [[ "$broken_repo" =~ ^APT-DETECTED: ]]; then
+                        local broken_path=$(echo "$broken_repo" | sed 's/APT-DETECTED://')
+                        if [[ "$line" =~ file:$broken_path ]]; then
+                            should_disable=true
+                            disable_reason="APT-reported broken repository"
+                            break
+                        fi
+                    elif [[ "$broken_repo" =~ ^/etc/apt/sources.list: ]]; then
+                        local broken_line=$(echo "$broken_repo" | sed 's|^/etc/apt/sources.list:||')
+                        if [[ "$line" == "$broken_line" ]]; then
+                            should_disable=true
+                            disable_reason="broken local repository"
+                            break
+                        fi
                     fi
+                done
+                
+                if [[ "$should_disable" == true ]]; then
+                    echo "# DISABLED by apt-fix.sh - $disable_reason: $line" >> "$temp_sources"
+                    echo -e "${GREEN}✓ Commented out $disable_reason in sources.list${NC}"
+                    log_message "INFO" "Commented out $disable_reason in sources.list: $line"
+                    fixed_sources=true
+                    ((repos_fixed++))
                 else
                     echo "$line" >> "$temp_sources"
                 fi
@@ -628,9 +696,19 @@ interactive_mode() {
         5) 
             echo -e "${CYAN}Running complete APT diagnosis and repair...${NC}"
             create_backups
-            identify_broken_repositories && fix_broken_repositories
-            identify_duplicate_repositories && fix_duplicate_repositories  
+            echo ""
+            echo "Step 1: Checking and fixing broken repositories..."
+            identify_broken_repositories
+            fix_broken_repositories
+            echo ""
+            echo "Step 2: Checking and fixing duplicate repositories..."
+            identify_duplicate_repositories
+            fix_duplicate_repositories
+            echo ""
+            echo "Step 3: Cleaning APT cache and refreshing..."
             clean_and_refresh_apt
+            echo ""
+            echo "Step 4: Testing final functionality..."
             test_apt_functionality
             ;;
         6) 
@@ -672,9 +750,19 @@ main() {
     elif [[ "$1" == "fix" ]]; then
         echo -e "${CYAN}Running automatic APT fix...${NC}"
         create_backups
-        identify_broken_repositories && fix_broken_repositories
-        identify_duplicate_repositories && fix_duplicate_repositories
+        echo ""
+        echo "Step 1: Checking and fixing broken repositories..."
+        identify_broken_repositories
+        fix_broken_repositories
+        echo ""
+        echo "Step 2: Checking and fixing duplicate repositories..."
+        identify_duplicate_repositories
+        fix_duplicate_repositories
+        echo ""
+        echo "Step 3: Cleaning APT cache and refreshing..."
         clean_and_refresh_apt
+        echo ""
+        echo "Step 4: Testing final functionality..."
         test_apt_functionality
     elif [[ "$1" == "test" ]]; then
         test_apt_functionality
